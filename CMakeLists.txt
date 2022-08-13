@@ -1,0 +1,17 @@
+cmake_minimum_required(VERSION 3.0)
+project(pmkl)
+set(ROOTDIR ${PROJECT_SOURCE_DIR})
+
+add_definitions(-DDEBUG)
+
+find_package(CUDA)
+if(CUDA_FOUND)
+    message("Cuda include path: ${CUDA_INCLUDE_DIRS}")
+    aux_source_directory(${ROOTDIR}/cuda CUDA_SRCS)
+    include_directories(${ROOTDIR}/cuda/lib)
+    message("Source files: ${CUDA_SRCS}")
+    foreach(EXAMPLE ${CUDA_SRCS})
+        string(REGEX REPLACE ".+/(.+)\\..*" "\\1" FILE_EXAMPLE ${EXAMPLE})
+        cuda_add_executable(${FILE_EXAMPLE} ${EXAMPLE} ${DIR_SRCS})
+    endforeach()
+endif(CUDA_FOUND)
