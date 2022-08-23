@@ -168,6 +168,10 @@ private:
     std::vector<size_t> device_global_memory_;
     int current_device_;
     size_t stream;
+
+public:
+    void submit() {
+    }
 };
 GpuLauncher *GpuLauncher::m_pInstance = new GpuLauncher();
 
