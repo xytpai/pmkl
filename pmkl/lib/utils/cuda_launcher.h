@@ -10,7 +10,44 @@
 
 #include "exception.h"
 
+#ifndef GPU_LAMBDA
+#define GPU_LAMBDA __host__ __device__
+#endif
+
+#ifndef GPU_CODE
+#define GPU_CODE __device__
+#endif
+
 namespace pmkl {
+
+struct KernelInfo {
+    using index_t = const unsigned int; // May change on some device
+    index_t &t_size0, &t_size1, &t_size2;
+    index_t &t0, &t1, &t2;
+    index_t &b_size0, &b_size1, &b_size2;
+    index_t &b0, &b1, &b2;
+    GPU_LAMBDA KernelInfo(
+        index_t &t_size0, index_t &t_size1, index_t &t_size2,
+        index_t &t0, index_t &t1, index_t &t2,
+        index_t &b_size0, index_t &b_size1, index_t &b_size2,
+        index_t &b0, index_t &b1, index_t &b2) :
+        t_size0(t_size0),
+        t_size1(t_size1), t_size2(t_size2),
+        t0(t0), t1(t1), t2(t2),
+        b_size0(b_size0), b_size1(b_size1), b_size2(b_size2),
+        b0(b0), b1(b1), b2(b2) {
+    }
+};
+
+template <typename func_t, typename... args_t>
+__global__ void kernel_wrapper(func_t fn, args_t... args) {
+    auto info = KernelInfo(
+        blockDim.x, blockDim.y, blockDim.z,
+        threadIdx.x, threadIdx.y, threadIdx.z,
+        gridDim.x, gridDim.y, gridDim.z,
+        blockIdx.x, blockIdx.y, blockIdx.z);
+    fn(info, std::forward<args_t>(args)...);
+}
 
 class GpuLauncher {
 public:
@@ -28,14 +65,16 @@ public:
     // Intrinsic API for device control
 
     void stream_begin() {
+        if (stream) stream_end();
         CHECK_FAIL(cudaStreamCreate((cudaStream_t *)&stream) == 0);
     }
 
     void stream_sync() {
-        CHECK_FAIL(cudaStreamSynchronize((cudaStream_t)stream) == 0);
+        if (stream) CHECK_FAIL(cudaStreamSynchronize((cudaStream_t)stream) == 0);
     }
 
     void stream_end() {
+        stream_sync();
         CHECK_FAIL(cudaStreamDestroy((cudaStream_t)stream) == 0);
         stream = 0;
     }
@@ -66,34 +105,29 @@ public:
 
     template <typename T>
     void memcpy(T *dst, const T *src, unsigned int len, Direction dir, bool sync = true) {
+        bool need_new_stream = stream != 0 ? false : true;
+        if (need_new_stream) stream_begin();
         switch (dir) {
         case Direction::H2D:
-            stream_begin();
             CHECK_FAIL(cudaMemcpyAsync(dst, src, len * sizeof(T),
                                        cudaMemcpyHostToDevice, (cudaStream_t)stream)
                        == 0);
-            stream_sync();
-            stream_end();
             break;
         case Direction::D2H:
-            stream_begin();
             CHECK_FAIL(cudaMemcpyAsync(dst, src, len * sizeof(T),
                                        cudaMemcpyDeviceToHost, (cudaStream_t)stream)
                        == 0);
-            stream_sync();
-            stream_end();
             break;
         case Direction::D2D:
-            stream_begin();
             CHECK_FAIL(cudaMemcpyAsync(dst, src, len * sizeof(T),
                                        cudaMemcpyDeviceToDevice, (cudaStream_t)stream)
                        == 0);
-            stream_sync();
-            stream_end();
             break;
         default:
             CHECK_FAIL(false, "invalid direction");
         }
+        if (sync) stream_sync();
+        if (need_new_stream) stream_end();
     }
 
     // For property
@@ -170,50 +204,30 @@ private:
     size_t stream;
 
 public:
-    void submit() {
+    template <typename func_t, typename... args_t>
+    void submit(
+        size_t slm_size,
+        std::vector<int> grid_size,
+        std::vector<int> block_size,
+        func_t fn, args_t &&... args) {
+        dim3 grid, block;
+        if (grid_size.size() == 1)
+            grid = dim3(grid_size[0]);
+        else if (grid_size.size() == 2)
+            grid = dim3(grid_size[0], grid_size[1]);
+        else if (grid_size.size() == 3)
+            grid = dim3(grid_size[0], grid_size[1], grid_size[2]);
+        if (block_size.size() == 1)
+            block = dim3(block_size[0]);
+        else if (block_size.size() == 2)
+            block = dim3(block_size[0], block_size[1]);
+        else if (block_size.size() == 3)
+            block = dim3(block_size[0], block_size[1], block_size[2]);
+
+        kernel_wrapper<<<grid, block, slm_size, (cudaStream_t)stream>>>(fn,
+                                                                        std::forward<args_t>(args)...);
     }
 };
 GpuLauncher *GpuLauncher::m_pInstance = new GpuLauncher();
 
-// #define DISPATCH_KERNEL(STREAM, KERNEL, GRID_SIZES, BLOCK_SIZES, SLM_SIZE, ...) \
-//     {                                                                           \
-//         dim3 grid, block;                                                       \
-//         if (GRID_SIZES.size() == 1)                                             \
-//             grid = dim3(GRID_SIZES[0]);                                         \
-//         else if (GRID_SIZES.size() == 2)                                        \
-//             grid = dim3(GRID_SIZES[0], GRID_SIZES[1]);                          \
-//         else if (GRID_SIZES.size() == 3)                                        \
-//             grid = dim3(GRID_SIZES[0], GRID_SIZES[1], GRID_SIZES[2]);           \
-//         if (BLOCK_SIZES.size() == 1)                                            \
-//             block = dim3(BLOCK_SIZES[0]);                                       \
-//         else if (BLOCK_SIZES.size() == 2)                                       \
-//             block = dim3(BLOCK_SIZES[0], BLOCK_SIZES[1]);                       \
-//         else if (BLOCK_SIZES.size() == 3)                                       \
-//             block = dim3(BLOCK_SIZES[0], BLOCK_SIZES[1], BLOCK_SIZES[2]);       \
-//         KERNEL<<<grid, block, SLM_SIZE, (cudaStream_t)STREAM>>>(__VA_ARGS__);   \
-//     }
-
-// #define DISPATCH_KERNEL_TEST(KERNEL, GRID_SIZES, BLOCK_SIZES, SLM_SIZE, ...) \
-//     {                                                                        \
-//         cudaEvent_t start, stop;                                             \
-//         cudaEventCreate(&start);                                             \
-//         cudaEventCreate(&stop);                                              \
-//         auto launcher = GpuLauncher::GetInstance();                          \
-//         launcher->StreamBegin();                                             \
-//         cudaEventRecord(start);                                              \
-//         DISPATCH_KERNEL(                                                     \
-//             launcher->GetStream(),                                           \
-//             KERNEL,                                                          \
-//             GRID_SIZES,                                                      \
-//             BLOCK_SIZES,                                                     \
-//             SLM_SIZE,                                                        \
-//             __VA_ARGS__);                                                    \
-//         cudaEventRecord(stop);                                               \
-//         launcher->StreamSync();                                              \
-//         cudaEventSynchronize(stop);                                          \
-//         launcher->StreamEnd();                                               \
-//         float milliseconds = 0;                                              \
-//         cudaEventElapsedTime(&milliseconds, start, stop);                    \
-//         std::cout << #KERNEL << ": " << milliseconds << " ms" << std::endl;  \
-//     }
 }; // namespace pmkl
