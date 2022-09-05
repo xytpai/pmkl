@@ -10,12 +10,24 @@
 
 #include "exception.h"
 
-#ifndef GPU_LAMBDA
-#define GPU_LAMBDA __host__ __device__
+#ifndef HOST_DEVICE
+#define HOST_DEVICE __host__ __device__
 #endif
 
-#ifndef GPU_CODE
-#define GPU_CODE __device__
+#ifndef HOST
+#define HOST __host__
+#endif
+
+#ifndef DEVICE
+#define DEVICE __device__
+#endif
+
+#ifndef HOST_DEVICE_INLINE
+#define HOST_DEVICE_INLINE __host__ __device__ __forceinline__
+#endif
+
+#ifndef DEVICE_LAMBDA
+#define DEVICE_LAMBDA __host__ __device__
 #endif
 
 namespace pmkl {
@@ -26,7 +38,7 @@ struct KernelInfo {
     index_t &t0, &t1, &t2;
     index_t &b_size0, &b_size1, &b_size2;
     index_t &b0, &b1, &b2;
-    GPU_LAMBDA KernelInfo(
+    HOST_DEVICE_INLINE KernelInfo(
         index_t &t_size0, index_t &t_size1, index_t &t_size2,
         index_t &t0, index_t &t1, index_t &t2,
         index_t &b_size0, index_t &b_size1, index_t &b_size2,
