@@ -5,9 +5,9 @@ set(ROOTDIR ${PROJECT_SOURCE_DIR})
 aux_source_directory(${ROOTDIR}/pmkl DEV_SRCS)
 message("Source files: ${DEV_SRCS}")
 
-include_directories(${ROOTDIR}/pmkl/lib)
-include_directories(${ROOTDIR}/pmkl/lib/utils)
-include_directories(${ROOTDIR}/pmkl/lib/tensor)
+include_directories(${ROOTDIR}/pmkl)
+include_directories(${ROOTDIR}/pmkl/utils)
+include_directories(${ROOTDIR}/pmkl/tensor)
 
 add_definitions(-DDEBUG)
 
