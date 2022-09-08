@@ -124,5 +124,12 @@ int main() {
         delete x_out;
     }
 
+    // test free
+    cout << "testing memory free\n";
+    for (int i = 0; i < 128; i++) {
+        auto t = l->malloc<char>(1024 * 1024 * 1024);
+        l->free(t);
+    }
+
     return 0;
 }
