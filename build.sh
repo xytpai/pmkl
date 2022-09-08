@@ -7,6 +7,8 @@ cd build
 
 if [ $INSTALL ]; then
     cmake ..; make install
+elif [ $TEST ]; then
+    cmake ..; make; make test
 else
     cmake ..; make
 fi

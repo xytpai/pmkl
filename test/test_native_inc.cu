@@ -6,7 +6,7 @@ using namespace std;
 
 int main() {
     auto l = GpuLauncher::GetInstance();
-    const int prb_size = 8;
+    const int prb_size = 1024;
     using dtype = int;
     dtype x_cpu[prb_size];
     for (auto &x : x_cpu) x = 0;

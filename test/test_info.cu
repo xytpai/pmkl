@@ -4,4 +4,5 @@
 using namespace pmkl;
 
 int main() {
+    return 0;
 }
