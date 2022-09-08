@@ -26,7 +26,7 @@ bool all_close(T *input, T *target, unsigned int len,
 #ifdef DEBUG
     std::cout << "Total " << errors << " errors\n";
 #endif
-    return true;
+    return errors == 0;
 }
 
 }

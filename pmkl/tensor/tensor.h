@@ -15,7 +15,7 @@ namespace pmkl {
 namespace memory {
 
 void delete_impl(void *ctx) {
-    GpuLauncher::GetInstance()->free<char>((char *)ctx);
+    GpuLauncher::GetInstance()->free(ctx);
 }
 
 class TensorStorage : public intrusive_ptr_target {

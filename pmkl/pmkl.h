@@ -2,6 +2,7 @@
 
 #include "launcher.h"
 #include "tensor.h"
+#include "measure.h"
 
 namespace pmkl {
 

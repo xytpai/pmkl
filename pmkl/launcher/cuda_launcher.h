@@ -116,8 +116,7 @@ public:
         return ptr;
     }
 
-    template <typename T>
-    void free(T *ptr) {
+    void free(void *ptr) {
         if (ptr) CHECK_FAIL(cudaFree(ptr) == 0);
     }
 
@@ -171,6 +170,10 @@ public:
 
     int max_thread_per_block() const {
         return device_max_thread_per_block_[current_device_];
+    }
+
+    int max_thread_per_group() const {
+        return max_thread_per_block();
     }
 
     size_t shared_local_memory_size() const {
