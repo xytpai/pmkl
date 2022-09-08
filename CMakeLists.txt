@@ -2,12 +2,14 @@ cmake_minimum_required(VERSION 3.0)
 project(pmkl)
 set(ROOTDIR ${PROJECT_SOURCE_DIR})
 
-aux_source_directory(${ROOTDIR}/pmkl DEV_SRCS)
-message("Source files: ${DEV_SRCS}")
-
 include_directories(${ROOTDIR}/pmkl)
-include_directories(${ROOTDIR}/pmkl/utils)
+include_directories(${ROOTDIR}/pmkl/launcher)
+include_directories(${ROOTDIR}/pmkl/memory)
 include_directories(${ROOTDIR}/pmkl/tensor)
+include_directories(${ROOTDIR}/pmkl/utils)
+
+aux_source_directory(${ROOTDIR}/test DEV_SRCS)
+message("Source files: ${DEV_SRCS}")
 
 add_definitions(-DDEBUG)
 

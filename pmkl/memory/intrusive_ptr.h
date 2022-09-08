@@ -4,6 +4,7 @@
 #include <atomic>
 
 namespace pmkl {
+namespace memory {
 
 class intrusive_ptr_target;
 namespace raw {
@@ -62,6 +63,9 @@ public:
     intrusive_ptr() noexcept :
         ptr_(nullptr) {
     }
+    T *ptr() const {
+        return ptr_;
+    }
     void set_ptr(T *ptr) noexcept {
         ptr_ = ptr;
         raw::incref(ptr_);
@@ -98,4 +102,5 @@ public:
     }
 };
 
-} // namespace pmkl
+}
+} // namespace pmkl::memory

@@ -8,7 +8,6 @@
 #include "data_ptr.h"
 #include "intrusive_ptr.h"
 #include "scalar_type.h"
-#include "device.h"
 #include "launcher.h"
 
 namespace pmkl {
@@ -23,16 +22,36 @@ class TensorStorage : public intrusive_ptr_target {
 protected:
     DataPtr ptr_;
     size_t size_;
+    int device_;
 
 public:
-    TensorStorage(Device d, size_t size) :
-        size_(size) {
-        auto raw_ptr = (void *)GpuLauncher::GetInstance()->malloc<char>(size_);
-        DataPtr ptr(raw_ptr, raw_ptr, delete_impl, d);
+    TensorStorage() :
+        ptr_(), size_(0), device_(0) {
+    }
+    TensorStorage(size_t size, int device) :
+        size_(size), device_(device) {
+        auto l = GpuLauncher::GetInstance();
+        if (l->device() != device_) l->set_device(device_);
+        auto raw_ptr = (void *)l->malloc<char>(size_);
+        DataPtr ptr(raw_ptr, raw_ptr, delete_impl);
         ptr_ = std::move(ptr);
     }
     ~TensorStorage() {
+        auto l = GpuLauncher::GetInstance();
+        if (l->device() != device_) l->set_device(device_);
         ptr_.clear();
+    }
+    int device() const {
+        return device_;
+    }
+    void *data_ptr() const {
+        return ptr_.get();
+    }
+    bool defined() const {
+        return ptr_ != nullptr;
+    }
+    size_t size() const {
+        return size_;
     }
 };
 
@@ -40,8 +59,11 @@ public:
 
 #define MAX_TENSOR_DIM 12
 
+using namespace memory;
+
 class Tensor;
-Tensor empty(std::vector<uint64_t> shape, ScalarType dtype, Device d);
+Tensor empty(std::vector<uint64_t> shape, ScalarType dtype, int device = 0);
+Tensor zeros(std::vector<uint64_t> shape, ScalarType dtype, int device = 0);
 
 class Tensor {
     using dim_array_t = memory::array<uint64_t, MAX_TENSOR_DIM>;
@@ -49,20 +71,20 @@ class Tensor {
     dim_array_t shape_;
     dim_array_t stride_;
     ScalarType dtype_;
-    Device device_;
-
     uint64_t numel_;
+
     intrusive_ptr<memory::TensorStorage> storage_;
 
-    void new_storage_() {
+    void new_storage_(int device) {
         size_t bytes = shape_[0] * stride_[0] * element_size(dtype_);
-        storage_.set_ptr(new memory::TensorStorage(device_, bytes));
+        storage_.set_ptr(new memory::TensorStorage(bytes, device));
     }
-    friend Tensor empty(std::vector<uint64_t> shape, ScalarType dtype, Device d);
+    friend Tensor empty(std::vector<uint64_t> shape, ScalarType dtype, int device);
+    friend Tensor zeros(std::vector<uint64_t> shape, ScalarType dtype, int device);
 
 public:
-    Tensor(std::vector<uint64_t> &shape, ScalarType dtype, Device d) :
-        dtype_(dtype), device_(d) {
+    Tensor(std::vector<uint64_t> &shape, ScalarType dtype) :
+        dtype_(dtype) {
         CHECK_FAIL(shape.size() <= MAX_TENSOR_DIM);
         dim_ = shape.size();
         numel_ = 1;
@@ -72,30 +94,59 @@ public:
             shape_[i] = shape[i];
         }
     }
-
-    Tensor(const Tensor &other) noexcept :
+    Tensor(const Tensor &other) :
         dim_(other.dim_), shape_(other.shape_), stride_(other.stride_),
-        dtype_(other.dtype_), device_(other.device_), numel_(other.numel_),
+        dtype_(other.dtype_), numel_(other.numel_),
         storage_(other.storage_) {
     }
-
-    ~Tensor() {
+    Tensor() :
+        storage_() {
     }
-
+    Tensor &operator=(const Tensor &other) {
+        dim_ = other.dim_;
+        shape_ = other.shape_;
+        stride_ = other.stride_;
+        dtype_ = other.dtype_;
+        numel_ = other.numel_;
+        storage_ = other.storage_;
+        return *this;
+    }
+    bool defined() const {
+        return storage_.ptr()->defined();
+    }
     uint64_t numel() const {
         return numel_;
     }
     int dim() const {
         return dim_;
     }
-    uint64_t size(int d) const {
+    int device() const {
+        return storage_.ptr()->device();
+    }
+    uint64_t shape(int d) const {
         return shape_[d];
+    }
+    void *data_ptr() const {
+        return storage_.ptr()->data_ptr();
+    }
+    size_t storage_bytes() const {
+        return storage_.ptr()->size();
+    }
+    size_t storage_ref_count() const {
+        return storage_.use_count();
     }
 };
 
-Tensor empty(std::vector<uint64_t> shape, ScalarType dtype, Device d) {
-    Tensor output(shape, dtype, d);
-    output.new_storage_();
+Tensor empty(std::vector<uint64_t> shape, ScalarType dtype, int device) {
+    Tensor output(shape, dtype);
+    output.new_storage_(device);
+    return output;
+}
+
+Tensor zeros(std::vector<uint64_t> shape, ScalarType dtype, int device) {
+    Tensor output(shape, dtype);
+    output.new_storage_(device);
+    GpuLauncher::GetInstance()->memset(output.data_ptr(), 0, output.storage_bytes());
     return output;
 }
 

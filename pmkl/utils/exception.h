@@ -8,6 +8,7 @@
 #include "string.h"
 
 namespace pmkl {
+namespace utils {
 
 class Error : public std::exception {
     std::string msg_;
@@ -127,4 +128,5 @@ decltype(auto) msg_impl(const char *, const Args &... args) {
             msg_impl("", ##__VA_ARGS__));                   \
     }
 
-}; // namespace pmkl
+}
+}; // namespace pmkl::utils

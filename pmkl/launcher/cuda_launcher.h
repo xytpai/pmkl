@@ -32,6 +32,8 @@
 
 namespace pmkl {
 
+using namespace utils;
+
 struct KernelInfo {
     using index_t = const unsigned int; // May change on some device
     index_t &t_size0, &t_size1, &t_size2;
@@ -77,18 +79,18 @@ public:
     // Intrinsic API for device control
 
     void stream_begin() {
-        if (stream) stream_end();
-        CHECK_FAIL(cudaStreamCreate((cudaStream_t *)&stream) == 0);
+        if (stream_) stream_end();
+        CHECK_FAIL(cudaStreamCreate((cudaStream_t *)&stream_) == 0);
     }
 
     void stream_sync() {
-        if (stream) CHECK_FAIL(cudaStreamSynchronize((cudaStream_t)stream) == 0);
+        if (stream_) CHECK_FAIL(cudaStreamSynchronize((cudaStream_t)stream_) == 0);
     }
 
     void stream_end() {
         stream_sync();
-        CHECK_FAIL(cudaStreamDestroy((cudaStream_t)stream) == 0);
-        stream = 0;
+        CHECK_FAIL(cudaStreamDestroy((cudaStream_t)stream_) == 0);
+        stream_ = 0;
     }
 
     void reset_device() {
@@ -97,10 +99,14 @@ public:
 
     void set_device(int d, bool reset = true) {
         CHECK_FAIL(d >= 0 && d < device_count_);
-        if (stream) stream_end();
+        if (stream_) stream_end();
         current_device_ = d;
         CHECK_FAIL(cudaSetDevice(current_device_) == 0);
         if (reset) reset_device();
+    }
+
+    int device() const {
+        return current_device_;
     }
 
     template <typename T>
@@ -117,22 +123,22 @@ public:
 
     template <typename T>
     void memcpy(T *dst, const T *src, unsigned int len, Direction dir, bool sync = true) {
-        bool need_new_stream = stream != 0 ? false : true;
+        bool need_new_stream = stream_ != 0 ? false : true;
         if (need_new_stream) stream_begin();
         switch (dir) {
         case Direction::H2D:
             CHECK_FAIL(cudaMemcpyAsync(dst, src, len * sizeof(T),
-                                       cudaMemcpyHostToDevice, (cudaStream_t)stream)
+                                       cudaMemcpyHostToDevice, (cudaStream_t)stream_)
                        == 0);
             break;
         case Direction::D2H:
             CHECK_FAIL(cudaMemcpyAsync(dst, src, len * sizeof(T),
-                                       cudaMemcpyDeviceToHost, (cudaStream_t)stream)
+                                       cudaMemcpyDeviceToHost, (cudaStream_t)stream_)
                        == 0);
             break;
         case Direction::D2D:
             CHECK_FAIL(cudaMemcpyAsync(dst, src, len * sizeof(T),
-                                       cudaMemcpyDeviceToDevice, (cudaStream_t)stream)
+                                       cudaMemcpyDeviceToDevice, (cudaStream_t)stream_)
                        == 0);
             break;
         default:
@@ -142,29 +148,36 @@ public:
         if (need_new_stream) stream_end();
     }
 
+    void memset(void *ptr, int value, size_t count, bool sync = true) {
+        bool need_new_stream = stream_ != 0 ? false : true;
+        if (need_new_stream) stream_begin();
+        cudaMemsetAsync(ptr, value, count, (cudaStream_t)stream_);
+        if (sync) stream_sync();
+        if (need_new_stream) stream_end();
+    }
+
     // For property
 
-    int get_count() const {
+    int device_count() const {
         return device_count_;
     }
-
-    size_t get_stream() const {
-        return stream;
+    size_t stream() const {
+        return stream_;
     }
 
-    std::string get_device_name() const {
+    std::string device_names() const {
         return device_names_[current_device_];
     }
 
-    int get_mak_thread_per_block() const {
+    int max_thread_per_block() const {
         return device_max_thread_per_block_[current_device_];
     }
 
-    size_t get_shared_local_memory_size() const {
+    size_t shared_local_memory_size() const {
         return device_shared_memory_[current_device_];
     }
 
-    size_t get_global_memory_size() const {
+    size_t global_memory_size() const {
         return device_global_memory_[current_device_];
     }
 
@@ -213,7 +226,7 @@ private:
     std::vector<size_t> device_shared_memory_;
     std::vector<size_t> device_global_memory_;
     int current_device_;
-    size_t stream;
+    size_t stream_;
 
 public:
     template <typename func_t, typename... args_t>
@@ -236,8 +249,8 @@ public:
         else if (block_size.size() == 3)
             block = dim3(block_size[0], block_size[1], block_size[2]);
 
-        kernel_wrapper<<<grid, block, slm_size, (cudaStream_t)stream>>>(fn,
-                                                                        std::forward<args_t>(args)...);
+        kernel_wrapper<<<grid, block, slm_size, (cudaStream_t)stream_>>>(fn,
+                                                                         std::forward<args_t>(args)...);
     }
 };
 GpuLauncher *GpuLauncher::m_pInstance = new GpuLauncher();

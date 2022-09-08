@@ -5,6 +5,7 @@
 #include <sstream>
 
 namespace pmkl {
+namespace utils {
 
 inline std::ostream &_str(std::ostream &ss) {
     return ss;
@@ -49,4 +50,5 @@ inline decltype(auto) str(const Args &... args) {
     return _str_wrapper<Args...>::call(args...);
 }
 
-}; // namespace pmkl
+}
+}; // namespace pmkl::utils
