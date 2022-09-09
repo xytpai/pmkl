@@ -11,7 +11,7 @@ include_directories(${ROOTDIR}/pmkl/utils)
 aux_source_directory(${ROOTDIR}/test DEV_SRCS)
 message("Source files: ${DEV_SRCS}")
 
-add_definitions(-DDEBUG)
+# add_definitions(-DDEBUG)
 enable_testing()
 
 find_package(CUDA)

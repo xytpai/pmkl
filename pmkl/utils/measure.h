@@ -9,9 +9,8 @@ namespace utils {
 
 template <typename T>
 bool all_close(T *input, T *target, unsigned int len,
-               double atol = 1e-6, double rtol = 1e-6) {
+               double atol = 1e-6, double rtol = 1e-6, int max_errors_print = 10) {
     unsigned int errors = 0;
-    const int max_errors_print = 10;
     for (unsigned int i = 0; i < len; i++) {
         if (std::isnan(input[i]) || (std::abs(input[i] - target[i]) > atol + rtol * std::abs(target[i]))) {
 #ifdef DEBUG

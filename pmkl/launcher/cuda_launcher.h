@@ -26,8 +26,8 @@
 #define HOST_DEVICE_INLINE __host__ __device__ __forceinline__
 #endif
 
-#ifndef DEVICE_LAMBDA
-#define DEVICE_LAMBDA __host__ __device__
+#ifndef DEVICE_INLINE
+#define DEVICE_INLINE __device__ __forceinline__
 #endif
 
 namespace pmkl {
@@ -36,30 +36,72 @@ using namespace utils;
 
 struct KernelInfo {
     using index_t = const unsigned int; // May change on some device
-    index_t &t_size0, &t_size1, &t_size2;
-    index_t &t0, &t1, &t2;
-    index_t &b_size0, &b_size1, &b_size2;
-    index_t &b0, &b1, &b2;
-    HOST_DEVICE_INLINE KernelInfo(
-        index_t &t_size0, index_t &t_size1, index_t &t_size2,
-        index_t &t0, index_t &t1, index_t &t2,
-        index_t &b_size0, index_t &b_size1, index_t &b_size2,
-        index_t &b0, index_t &b1, index_t &b2) :
-        t_size0(t_size0),
-        t_size1(t_size1), t_size2(t_size2),
-        t0(t0), t1(t1), t2(t2),
-        b_size0(b_size0), b_size1(b_size1), b_size2(b_size2),
-        b0(b0), b1(b1), b2(b2) {
+    char *smem_;
+    DEVICE_INLINE KernelInfo(char *smem) :
+        smem_(smem) {
     }
+    DEVICE_INLINE index_t thread_idx(int d) {
+        switch (d) {
+        case 0:
+            return threadIdx.x;
+        case 1:
+            return threadIdx.y;
+        case 2:
+            return threadIdx.z;
+        }
+        return 0;
+    }
+    DEVICE_INLINE index_t thread_range(int d) {
+        switch (d) {
+        case 0:
+            return blockDim.x;
+        case 1:
+            return blockDim.y;
+        case 2:
+            return blockDim.z;
+        }
+        return 0;
+    }
+    DEVICE_INLINE index_t block_idx(int d) {
+        switch (d) {
+        case 0:
+            return blockIdx.x;
+        case 1:
+            return blockIdx.y;
+        case 2:
+            return blockIdx.z;
+        }
+        return 0;
+    }
+    DEVICE_INLINE index_t block_range(int d) {
+        switch (d) {
+        case 0:
+            return gridDim.x;
+        case 1:
+            return gridDim.y;
+        case 2:
+            return gridDim.z;
+        }
+        return 0;
+    }
+    DEVICE_INLINE index_t group_idx(int d) {
+        return block_idx(d);
+    }
+    DEVICE_INLINE index_t group_range(int d) {
+        return block_range(d);
+    }
+    DEVICE_INLINE void barrier() {
+        __syncthreads();
+    }
+    DEVICE_INLINE char *shared_ptr() {
+        return smem_;
+    };
 };
 
 template <typename func_t, typename... args_t>
-__global__ void kernel_wrapper(func_t fn, args_t... args) {
-    auto info = KernelInfo(
-        blockDim.x, blockDim.y, blockDim.z,
-        threadIdx.x, threadIdx.y, threadIdx.z,
-        gridDim.x, gridDim.y, gridDim.z,
-        blockIdx.x, blockIdx.y, blockIdx.z);
+__global__ void kernel_wrapper(func_t fn, args_t &&... args) {
+    extern __shared__ char smem[];
+    auto info = KernelInfo(smem);
     fn(info, std::forward<args_t>(args)...);
 }
 
@@ -120,23 +162,22 @@ public:
         if (ptr) CHECK_FAIL(cudaFree(ptr) == 0);
     }
 
-    template <typename T>
-    void memcpy(T *dst, const T *src, unsigned int len, Direction dir, bool sync = true) {
+    void memcpy(void *dst, const void *src, unsigned int len, Direction dir, bool sync = true) {
         bool need_new_stream = stream_ != 0 ? false : true;
         if (need_new_stream) stream_begin();
         switch (dir) {
         case Direction::H2D:
-            CHECK_FAIL(cudaMemcpyAsync(dst, src, len * sizeof(T),
+            CHECK_FAIL(cudaMemcpyAsync(dst, src, len * sizeof(char),
                                        cudaMemcpyHostToDevice, (cudaStream_t)stream_)
                        == 0);
             break;
         case Direction::D2H:
-            CHECK_FAIL(cudaMemcpyAsync(dst, src, len * sizeof(T),
+            CHECK_FAIL(cudaMemcpyAsync(dst, src, len * sizeof(char),
                                        cudaMemcpyDeviceToHost, (cudaStream_t)stream_)
                        == 0);
             break;
         case Direction::D2D:
-            CHECK_FAIL(cudaMemcpyAsync(dst, src, len * sizeof(T),
+            CHECK_FAIL(cudaMemcpyAsync(dst, src, len * sizeof(char),
                                        cudaMemcpyDeviceToDevice, (cudaStream_t)stream_)
                        == 0);
             break;

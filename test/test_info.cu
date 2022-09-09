@@ -1,3 +1,5 @@
+#define DEBUG
+
 #include "pmkl.h"
 #include <iostream>
 

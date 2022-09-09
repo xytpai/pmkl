@@ -29,9 +29,9 @@ int main() {
     auto gm = l->malloc<float>(prb_size);
     auto gm2 = l->malloc<float>(prb_size);
     for (int i = 0; i < prb_size; i++) cm[i] = 1.3 * i;
-    l->memcpy(gm, cm, prb_size, GpuLauncher::Direction::H2D);
-    l->memcpy(gm2, gm, prb_size, GpuLauncher::Direction::D2D);
-    l->memcpy(cm2, gm2, prb_size, GpuLauncher::Direction::D2H);
+    l->memcpy((void *)gm, (void *)cm, prb_size * sizeof(float), GpuLauncher::Direction::H2D);
+    l->memcpy((void *)gm2, (void *)gm, prb_size * sizeof(float), GpuLauncher::Direction::D2D);
+    l->memcpy((void *)cm2, (void *)gm2, prb_size * sizeof(float), GpuLauncher::Direction::D2H);
     auto ret = all_close<float>(cm2, cm, prb_size);
     if (!ret) return 1;
     delete cm;
@@ -45,7 +45,7 @@ int main() {
     l->memset((void *)data_gpu, 0, prb_size * sizeof(int));
     auto data_cpu = new int[prb_size];
     for (int i = 0; i < prb_size; i++) data_cpu[i] = i;
-    l->memcpy<int>(data_cpu, data_gpu, prb_size, GpuLauncher::Direction::D2H);
+    l->memcpy((void *)data_cpu, (void *)data_gpu, prb_size * sizeof(int), GpuLauncher::Direction::D2H);
     for (int i = 0; i < prb_size; i++) {
         if (data_cpu[i] != 0) return 1;
     }
@@ -60,19 +60,19 @@ int main() {
     int group_size = (prb_size + 256 - 1) / 256;
     l->submit(
         0, {group_size}, {256},
-        [=] DEVICE_LAMBDA(KernelInfo & info) {
-            int lid = info.b0 * info.t_size0 + info.t0;
+        [=] DEVICE(KernelInfo & info) {
+            int lid = info.block_idx(0) * info.thread_range(0) + info.thread_idx(0);
             if (lid < prb_size) x_gpu[lid] = 2 * lid;
         });
     l->stream_sync();
     l->submit(
         0, {group_size}, {256},
-        [=] DEVICE_LAMBDA(KernelInfo & info) {
-            int lid = info.b0 * info.t_size0 + info.t0;
+        [=] DEVICE(KernelInfo & info) {
+            int lid = info.block_idx(0) * info.thread_range(0) + info.thread_idx(0);
             if (lid < prb_size) x_gpu[lid] -= 1;
         });
     l->stream_sync();
-    l->memcpy(x_out, x_gpu, prb_size, GpuLauncher::Direction::D2H, true);
+    l->memcpy((void *)x_out, (void *)x_gpu, prb_size * sizeof(int), GpuLauncher::Direction::D2H, true);
     l->stream_end();
     for (int i = 0; i < prb_size; i++) {
         if (x_out[i] != 2 * i - 1) return 1;
@@ -98,21 +98,21 @@ int main() {
         int group_size = (prb_size + 256 - 1) / 256;
         l->submit(
             0, {1, group_size}, {16, 8, 2},
-            [=] DEVICE_LAMBDA(KernelInfo & info) {
-                int t0 = info.t0 * 16 + info.t1 * 2 + info.t2;
-                int lid = info.b1 * 256 + t0;
+            [=] DEVICE(KernelInfo & info) {
+                int t0 = info.thread_idx(0) * 16 + info.thread_idx(1) * 2 + info.thread_idx(2);
+                int lid = info.block_idx(1) * 256 + t0;
                 if (lid < prb_size) x_gpu[lid] = 2 * lid;
             });
         l->stream_sync();
         l->submit(
             0, {1, group_size}, {16, 8, 2},
-            [=] DEVICE_LAMBDA(KernelInfo & info) {
-                int t0 = info.t0 * 16 + info.t1 * 2 + info.t2;
-                int lid = info.b1 * 256 + t0;
+            [=] DEVICE(KernelInfo & info) {
+                int t0 = info.thread_idx(0) * 16 + info.thread_idx(1) * 2 + info.thread_idx(2);
+                int lid = info.block_idx(1) * 256 + t0;
                 if (lid < prb_size) x_gpu[lid] -= 1;
             });
         l->stream_sync();
-        l->memcpy(x_out, x_gpu, prb_size, GpuLauncher::Direction::D2H, true);
+        l->memcpy((void *)x_out, (void *)x_gpu, prb_size * sizeof(int), GpuLauncher::Direction::D2H, true);
         l->stream_end();
         for (int i = 0; i < prb_size; i++) {
             if (x_out[i] != 2 * i - 1) {
@@ -131,5 +131,6 @@ int main() {
         l->free(t);
     }
 
+    cout << "ok\n";
     return 0;
 }
