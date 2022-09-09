@@ -55,7 +55,7 @@ int main() {
         Tensor a;
         a = empty({1, 2, 3}, ScalarType::Double, 0);
         if (a.storage_ref_count() != 1) return 1;
-        Tensor b = empty({1, 2, 3}, ScalarType::Double, 0);
+        Tensor b = empty({1, 2, 5}, ScalarType::Double, 0);
         Tensor bb = b;
         if (bb.storage_ref_count() != 2) return 1;
         if (b.storage_ref_count() != 2) return 1;
@@ -64,6 +64,34 @@ int main() {
         if (b.storage_ref_count() != 2) return 1;
         if (a.storage().get() != b.storage().get()) return 1;
         if (bb.storage_ref_count() != 1) return 1;
+        if (bb.numel() != 1 * 2 * 5) return 1;
+        if (b.numel() != 6) return 1;
+        {
+            Tensor a = empty({1, 2, 3}, ScalarType::Double, 0);
+            Tensor b = empty({1, 2, 5}, ScalarType::Double, 0);
+            Tensor aa = a;
+            Tensor bb = b;
+            {
+                Tensor temp = aa;
+                aa = bb;
+                bb = temp;
+            }
+            if (aa.storage().get() != b.storage().get()) return 1;
+            if (bb.storage().get() != a.storage().get()) return 1;
+            if (aa.storage_ref_count() != 2) return 1;
+            if (bb.storage_ref_count() != 2) return 1;
+        }
+        {
+            Tensor a = empty({1, 2, 3}, ScalarType::Double, 0);
+            Tensor b = empty({1, 2, 5}, ScalarType::Double, 0);
+            Tensor aa = a;
+            Tensor bb = b;
+            std::swap(aa, bb);
+            if (aa.storage().get() != b.storage().get()) return 1;
+            if (bb.storage().get() != a.storage().get()) return 1;
+            if (aa.storage_ref_count() != 2) return 1;
+            if (bb.storage_ref_count() != 2) return 1;
+        }
     }
 
     {
