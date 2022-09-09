@@ -55,9 +55,18 @@ inline size_t use_count(intrusive_ptr_target *self) {
 template <typename T>
 class intrusive_ptr {
     T *ptr_;
+    inline void decref_or_delete() {
+        if (ptr_) {
+            raw::decref(ptr_);
+            if (raw::use_count(ptr_) == 0) {
+                delete ptr_;
+                ptr_ = nullptr;
+            }
+        }
+    }
 
 public:
-    size_t use_count() const {
+    size_t ref_count() const {
         return raw::use_count(ptr_);
     }
     intrusive_ptr() noexcept :
@@ -66,7 +75,10 @@ public:
     T *ptr() const {
         return ptr_;
     }
-    void set_ptr(T *ptr) noexcept {
+    T *get() const {
+        return ptr_;
+    }
+    void unsafe_set_ptr(T *ptr) noexcept {
         ptr_ = ptr;
         raw::incref(ptr_);
     }
@@ -84,6 +96,8 @@ public:
     }
     intrusive_ptr<T> &operator=(const intrusive_ptr<T> &other) {
         if (ptr_ == other.ptr_) return *this;
+        decref_or_delete();
+        ptr_ = other.ptr_;
         raw::incref(ptr_);
         return *this;
     }
@@ -92,13 +106,7 @@ public:
         return *this;
     }
     ~intrusive_ptr() {
-        if (ptr_) {
-            raw::decref(ptr_);
-            if (raw::use_count(ptr_) == 0) {
-                delete ptr_;
-                ptr_ = nullptr;
-            }
-        }
+        decref_or_delete();
     }
 };
 

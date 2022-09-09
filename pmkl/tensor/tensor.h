@@ -48,7 +48,7 @@ public:
         return ptr_.get();
     }
     bool defined() const {
-        return ptr_ != nullptr;
+        return static_cast<bool>(ptr_);
     }
     size_t size() const {
         return size_;
@@ -77,7 +77,7 @@ class Tensor {
 
     void new_storage_(int device) {
         size_t bytes = shape_[0] * stride_[0] * element_size(dtype_);
-        storage_.set_ptr(new memory::TensorStorage(bytes, device));
+        storage_.unsafe_set_ptr(new memory::TensorStorage(bytes, device));
     }
     friend Tensor empty(std::vector<uint64_t> shape, ScalarType dtype, int device);
     friend Tensor zeros(std::vector<uint64_t> shape, ScalarType dtype, int device);
@@ -88,8 +88,8 @@ public:
         CHECK_FAIL(shape.size() <= MAX_TENSOR_DIM);
         dim_ = shape.size();
         numel_ = 1;
-        for (int i = 0; i < dim_; i++) {
-            stride_[dim_ - 1 - i] = numel_;
+        for (int i = dim_ - 1; i >= 0; i--) {
+            stride_[i] = numel_;
             numel_ *= shape[i];
             shape_[i] = shape[i];
         }
@@ -102,17 +102,8 @@ public:
     Tensor() :
         storage_() {
     }
-    Tensor &operator=(const Tensor &other) {
-        dim_ = other.dim_;
-        shape_ = other.shape_;
-        stride_ = other.stride_;
-        dtype_ = other.dtype_;
-        numel_ = other.numel_;
-        storage_ = other.storage_;
-        return *this;
-    }
     bool defined() const {
-        return storage_.ptr()->defined();
+        return storage_.get() != nullptr;
     }
     uint64_t numel() const {
         return numel_;
@@ -121,10 +112,13 @@ public:
         return dim_;
     }
     int device() const {
-        return storage_.ptr()->device();
+        return storage_.get()->device();
     }
     uint64_t shape(int d) const {
         return shape_[d];
+    }
+    uint64_t stride(int d) const {
+        return stride_[d];
     }
     void *data_ptr() const {
         return storage_.ptr()->data_ptr();
@@ -133,7 +127,10 @@ public:
         return storage_.ptr()->size();
     }
     size_t storage_ref_count() const {
-        return storage_.use_count();
+        return storage_.ref_count();
+    }
+    intrusive_ptr<memory::TensorStorage> storage() const {
+        return storage_;
     }
 };
 
