@@ -47,6 +47,10 @@ public:
     void *data_ptr() const {
         return ptr_.get();
     }
+    template <typename T>
+    T *data_ptr() const {
+        return reinterpret_cast<T *>(ptr_.get());
+    }
     bool defined() const {
         return static_cast<bool>(ptr_);
     }
@@ -77,7 +81,8 @@ class Tensor {
 
     void new_storage_(int device) {
         size_t bytes = shape_[0] * stride_[0] * element_size(dtype_);
-        storage_.unsafe_set_ptr(new memory::TensorStorage(bytes, device));
+        auto ptr = new memory::TensorStorage(bytes, device);
+        storage_.unsafe_set_ptr(ptr);
     }
     friend Tensor empty(std::vector<uint64_t> shape, ScalarType dtype, int device);
     friend Tensor zeros(std::vector<uint64_t> shape, ScalarType dtype, int device);
@@ -99,6 +104,17 @@ public:
         dtype_(other.dtype_), numel_(other.numel_),
         storage_(other.storage_) {
     }
+    Tensor &operator=(const Tensor &other) {
+        dim_ = other.dim_;
+        shape_ = other.shape_;
+        stride_ = other.stride_;
+        dtype_ = other.dtype_;
+        numel_ = other.numel_;
+        storage_ = other.storage_;
+        return *this;
+    }
+    Tensor(Tensor &&other) = default;
+    Tensor &operator=(Tensor &&other) = default;
     Tensor() :
         storage_() {
     }
@@ -121,10 +137,10 @@ public:
         return stride_[d];
     }
     void *data_ptr() const {
-        return storage_.ptr()->data_ptr();
+        return storage_.get()->data_ptr();
     }
     size_t storage_bytes() const {
-        return storage_.ptr()->size();
+        return storage_.get()->size();
     }
     size_t storage_ref_count() const {
         return storage_.ref_count();

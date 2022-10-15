@@ -1,10 +1,9 @@
 #pragma once
 
-#include "common.h"
-#include "key_traits.h"
-#include "block_aligned_cumsum.h"
+#include "sorting_common.h"
 
 namespace pmkl {
+namespace sorting {
 
 /*
 SegmentedBlockRadixSort aim to sort segmented paris efficiently.
@@ -43,18 +42,22 @@ public:
 
 private:
     int lid;
+    char *local_storage;
+    KernelInfo &info;
 
 public:
-    static int get_shared_local_memory_size() {
+    static int GetSharedLocalMemorySize() {
         constexpr int KV_TYPE_SIZE = KEYS_ONLY ? sizeof(KeyT) : std::max(sizeof(KeyT), sizeof(ValueT));
         return std::max(BLOCK_THREADS * KEYS_PER_THREAD * KV_TYPE_SIZE, (int)PACKED_SCAN_SIZE);
     }
 
-    GPU_CODE inline SegmentedBlockRadixSort(int lid) :
-        lid(lid) {
+    DEVICE inline SegmentedBlockRadixSort(KernelInfo &info_) :
+        info(info_) {
+        lid = info.thread_idx(0);
+        local_storage = reinterpret_cast<char *>(info.shared_ptr());
     }
 
-    GPU_CODE inline void sort(
+    DEVICE inline void sort(
         KeyTraitsT (&pkey)[KEYS_PER_THREAD],
         ValueT (&pvalue)[KEYS_PER_THREAD]) {
         int begin_bit = 0;
@@ -70,7 +73,7 @@ public:
         }
     }
 
-    GPU_CODE inline void sort(KeyTraitsT (&pkey)[KEYS_PER_THREAD]) {
+    DEVICE inline void sort(KeyTraitsT (&pkey)[KEYS_PER_THREAD]) {
         int begin_bit = 0;
         int end_bit = 8 * sizeof(KeyTraitsT);
         while (true) {
@@ -83,9 +86,9 @@ public:
         }
     }
 
-    GPU_CODE inline void read_key_from_global(
+    DEVICE inline void read_key_from_global(
         KeyTraitsT (&pkey)[KEYS_PER_THREAD],
-        KeyT *key, int length) {
+        const KeyT *key, int length) {
         KeyTraitsT PADDING_KEY;
         if (IS_DESCENDING) {
             PADDING_KEY = 0;
@@ -101,9 +104,9 @@ public:
         }
     }
 
-    GPU_CODE inline void read_value_from_global(
-        PrivateValueT (&pvalue)[KEYS_PER_THREAD],
-        ValueT *value, int length) {
+    DEVICE inline void read_value_from_global(
+        ValueT (&pvalue)[KEYS_PER_THREAD],
+        const ValueT *value, int length) {
 #pragma unroll
         for (int ITEM = 0; ITEM < KEYS_PER_THREAD; ++ITEM) {
             int offset = lid * KEYS_PER_THREAD + ITEM;
@@ -116,7 +119,7 @@ public:
         }
     }
 
-    GPU_CODE inline void write_key_to_global(
+    DEVICE inline void write_key_to_global(
         KeyT *key,
         KeyTraitsT (&pkey)[KEYS_PER_THREAD], int length) {
 #pragma unroll
@@ -127,9 +130,9 @@ public:
         }
     }
 
-    GPU_CODE inline void write_value_to_global(
+    DEVICE inline void write_value_to_global(
         ValueT *value,
-        PrivateValueT (&pvalue)[KEYS_PER_THREAD], int length) {
+        ValueT (&pvalue)[KEYS_PER_THREAD], int length) {
 #pragma unroll
         for (int ITEM = 0; ITEM < KEYS_PER_THREAD; ++ITEM) {
             int offset = lid * KEYS_PER_THREAD + ITEM;
@@ -138,26 +141,26 @@ public:
     }
 
     template <typename T>
-    GPU_CODE inline void exchange(
+    DEVICE inline void exchange(
         T (&data)[KEYS_PER_THREAD],
         int (&rank)[KEYS_PER_THREAD]) {
         auto local_storage_ = reinterpret_cast<T *>(local_storage);
 #pragma unroll
         for (int ITEM = 0; ITEM < KEYS_PER_THREAD; ++ITEM)
             local_storage_[rank[ITEM]] = data[ITEM];
-        __syncthreads();
+        info.barrier();
         auto local_storage_lid = local_storage_ + lid * KEYS_PER_THREAD;
 #pragma unroll
         for (int ITEM = 0; ITEM < KEYS_PER_THREAD; ++ITEM)
             data[ITEM] = local_storage_lid[ITEM];
-        __syncthreads();
+        info.barrier();
     }
 
-    GPU_CODE inline DigitT extract_digit(KeyTraitsT key, int begin, int pass) {
+    DEVICE inline DigitT extract_digit(KeyTraitsT key, int begin, int pass) {
         return ((key >> begin) & ((1 << pass) - 1));
     }
 
-    GPU_CODE inline void rank_keys(
+    DEVICE inline void rank_keys(
         KeyTraitsT (&key)[KEYS_PER_THREAD],
         int (&rank)[KEYS_PER_THREAD],
         int begin_bit,
@@ -171,7 +174,7 @@ public:
 #pragma unroll
         for (int ITEM = 0; ITEM < COUNTER_LANES; ++ITEM)
             scan_storage[lid * COUNTER_LANES + ITEM] = 0; // fast
-        __syncthreads();
+        info.barrier();
 
         // Bin
 #pragma unroll
@@ -188,13 +191,13 @@ public:
             rank[ITEM] = *digit_counters[ITEM];
             *digit_counters[ITEM] = rank[ITEM] + 1;
         }
-        __syncthreads();
+        info.barrier();
 
         // Exclusive scan
         CounterT temp = block_aligned_exclusive_cumsum<
             CounterT,
             COUNTER_LANES,
-            BLOCK_THREADS>(scan_storage, lid);
+            BLOCK_THREADS>(info, scan_storage, lid);
 
         CounterT c = 0;
 #pragma unroll
@@ -209,8 +212,9 @@ public:
             DigitT cc = (c >> (sub_counters[ITEM] * DIGIT_BITS)) & DIGIT_MASK;
             rank[ITEM] += *digit_counters[ITEM] + cc;
         }
-        __syncthreads();
+        info.barrier();
     }
 };
 
-} // namespace pmkl
+}
+} // namespace pmkl::sorting

@@ -72,9 +72,6 @@ public:
     intrusive_ptr() noexcept :
         ptr_(nullptr) {
     }
-    T *ptr() const {
-        return ptr_;
-    }
     T *get() const {
         return ptr_;
     }
@@ -102,7 +99,10 @@ public:
         return *this;
     }
     intrusive_ptr<T> &operator=(const intrusive_ptr<T> &&other) {
-        std::swap(ptr_, other.ptr_);
+        if (ptr_ == other.ptr_) return *this;
+        decref_or_delete();
+        ptr_ = other.ptr_;
+        raw::incref(ptr_);
         return *this;
     }
     ~intrusive_ptr() {

@@ -1,8 +1,9 @@
 #pragma once
 
-#include "common.h"
+#include "launcher.h"
 
 namespace pmkl {
+namespace sorting {
 
 /*
 The computational pipeline is as following:
@@ -15,11 +16,13 @@ in0  in1  in2  in3  |  in4  in5  in6  in7
 STEPS should be Log2<WARP_SIZE>::VALUE
 */
 template <typename T, int STEPS>
-GPU_CODE inline void warp_aligned_cumsum(const int wid, const T input, T &inclusive_sum, T &exclusive_sum) {
+DEVICE inline void warp_aligned_cumsum(const int wid, const T input, T &inclusive_sum, T &exclusive_sum) {
     inclusive_sum = input;
 #pragma unroll
     for (int i = 0, offset = 1; i < STEPS; ++i, offset <<= 1) {
+#if defined(USE_CUDA)
         T temp = __shfl_up_sync(0xffffffff, inclusive_sum, offset);
+#endif
         if (wid >= offset) inclusive_sum += temp;
     }
     exclusive_sum = inclusive_sum - input;
@@ -36,7 +39,7 @@ template <
     int THREADS,
     bool EXCLUSIVE = true,
     int WARP_SIZE = 32>
-GPU_CODE inline T block_aligned_cumsum(T *storage, const int lid) {
+DEVICE inline T block_aligned_cumsum(KernelInfo &info, T *storage, const int lid) {
     static_assert(THREADS % WARP_SIZE == 0, "THREADS should be n * WARP_SIZE. (n = 1, 2, 3, ...)");
 
     const int NUM_WARPS = THREADS / WARP_SIZE;
@@ -66,17 +69,17 @@ GPU_CODE inline T block_aligned_cumsum(T *storage, const int lid) {
 
     // Get warp level exclusive sum
     T warp_inclusive_sum, warp_exclusive_sum;
-    warp_aligned_scan<T, WARP_CUMSUM_STEPS>(
+    warp_aligned_cumsum<T, WARP_CUMSUM_STEPS>(
         warp_local_id,
         lane_all_sum,
         warp_inclusive_sum,
         warp_exclusive_sum);
-    __syncthreads();
+    info.barrier();
 
     // Write to storage
     if (warp_local_id == (WARP_SIZE - 1))
         storage[warp_id] = warp_inclusive_sum;
-    __syncthreads();
+    info.barrier();
 
     // Get block prefix
     T block_all_sum = 0, block_exclusive_sum;
@@ -86,7 +89,7 @@ GPU_CODE inline T block_aligned_cumsum(T *storage, const int lid) {
             block_exclusive_sum = block_all_sum;
         block_all_sum += storage[i];
     }
-    __syncthreads();
+    info.barrier();
 
     // Write to storage
     warp_exclusive_sum += block_exclusive_sum;
@@ -94,19 +97,20 @@ GPU_CODE inline T block_aligned_cumsum(T *storage, const int lid) {
     for (int lane = 0; lane < COUNTER_LANES; ++lane) {
         storage_lanes[lane] = warp_exclusive_sum + lane_temp_values[lane];
     }
-    __syncthreads();
+    info.barrier();
 
     return block_all_sum;
 }
 
 template <typename T, int COUNTER_LANES, int THREADS>
-GPU_CODE inline T block_aligned_exclusive_cumsum(T *slm_storage, const int lid) {
-    return block_aligned_cumsum<T, COUNTER_LANES, THREADS, true>(slm_storage, lid);
+DEVICE inline T block_aligned_exclusive_cumsum(KernelInfo &info, T *slm_storage, const int lid) {
+    return block_aligned_cumsum<T, COUNTER_LANES, THREADS, true>(info, slm_storage, lid);
 }
 
 template <typename T, int COUNTER_LANES, int THREADS>
-GPU_CODE inline T block_aligned_inclusive_cumsum(T *slm_storage, const int lid) {
-    return block_aligned_cumsum<T, COUNTER_LANES, THREADS, false>(slm_storage, lid);
+DEVICE inline T block_aligned_inclusive_cumsum(KernelInfo &info, T *slm_storage, const int lid) {
+    return block_aligned_cumsum<T, COUNTER_LANES, THREADS, false>(info, slm_storage, lid);
 }
 
-} // namespace pmkl
+}
+} // namespace pmkl::sorting

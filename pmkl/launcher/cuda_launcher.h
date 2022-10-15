@@ -225,6 +225,14 @@ public:
         return device_global_memory_[current_device_];
     }
 
+    void set_sync_mode(bool is_sync) {
+        sync_mode_ = is_sync;
+    }
+
+    bool is_sync_mode() const {
+        return sync_mode_;
+    }
+
 private:
     GpuLauncher() {
         // Need intrinsic API
@@ -253,6 +261,7 @@ private:
         std::cout << std::endl;
 #endif
         set_device(0);
+        sync_mode_ = true;
     }
 
     ~GpuLauncher() {
@@ -271,6 +280,7 @@ private:
     std::vector<size_t> device_global_memory_;
     int current_device_;
     size_t stream_;
+    bool sync_mode_;
 
 public:
     template <typename func_t, typename... args_t>

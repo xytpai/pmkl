@@ -95,14 +95,13 @@ int main() {
     }
 
     {
-        // cout << "testing std::move storage\n";
-        // Tensor a = empty({1, 2, 3}, ScalarType::Double, 0);
-        // Tensor aa = a;
-        // if (a.storage_ref_count() != 2) return 1;
-        // Tensor b = empty({1, 2, 3}, ScalarType::Double, 0);
-        // b = std::move(a);
-        // cout << a.storage_ref_count() << endl;
-        // if (b.storage_ref_count() != 2) return 1;
+        cout << "testing std::move storage\n";
+        Tensor a = empty({1, 2, 3}, ScalarType::Double, 0);
+        Tensor aa = a;
+        if (a.storage_ref_count() != 2) return 1;
+        Tensor b = empty({1, 2, 3}, ScalarType::Double, 0);
+        Tensor c(std::move(a));
+        if (aa.storage_ref_count() != 2) return 1;
     }
 
     cout << "ok\n";
