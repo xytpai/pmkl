@@ -1,7 +1,9 @@
 #pragma once
 
+#include <limits>
+
 #include "sorting_common.h"
-#include "block_radix_sort.h"
+#include "block_radix_processer.h"
 #include "exception.h"
 
 using namespace pmkl::utils;
@@ -14,24 +16,42 @@ void segmented_sort_pairs_impl(
     const key_t *keys_in, key_t *keys_out,
     const value_t *values_in, value_t *values_out,
     int num_segments, int num_elements) {
-    using SortMethod = SegmentedBlockRadixSort<key_t, value_t, IS_DESCENDING, BLOCK_THREADS, KEYS_PER_ITEM,
-                                               false>;
-    using KeyTraitsT = typename SortMethod::KeyTraitsT;
+    using SortMethod = BlockRadixProcesser<key_t, BLOCK_THREADS, KEYS_PER_ITEM, IS_DESCENDING, value_t>;
     auto l = GpuLauncher::GetInstance();
+    auto padding_key = IS_DESCENDING ? std::numeric_limits<key_t>::lowest() : std::numeric_limits<key_t>::max();
     l->submit(
         SortMethod::GetSharedLocalMemorySize(),
         {num_segments}, {BLOCK_THREADS},
         [=] DEVICE(KernelInfo & info) {
             int b = info.block_idx(0);
-            int offset = b * num_elements;
+            int b_offset = b * num_elements;
+            int lid = info.thread_idx(0);
             auto method = SortMethod(info);
-            KeyTraitsT pkey[SortMethod::REG_LEN];
-            value_t pvalue[SortMethod::REG_LEN];
-            method.read_key_from_global(pkey, keys_in + offset, num_elements);
-            method.read_value_from_global(pvalue, values_in + offset, num_elements);
-            method.sort(pkey, pvalue);
-            method.write_key_to_global(keys_out + offset, pkey, num_elements);
-            method.write_value_to_global(values_out + offset, pvalue, num_elements);
+
+            key_t keys[SortMethod::REG_LEN];
+            value_t values[SortMethod::REG_LEN];
+
+#pragma unroll
+            for (int ITEM = 0; ITEM < KEYS_PER_ITEM; ++ITEM) {
+                int offset = lid * KEYS_PER_ITEM + ITEM;
+                if (offset < num_elements) {
+                    keys[ITEM] = keys_in[b_offset + offset];
+                    values[ITEM] = values_in[b_offset + offset];
+                } else {
+                    keys[ITEM] = padding_key;
+                }
+            }
+
+            method.sort_blocked(keys, values, 0, sizeof(key_t) * 8);
+
+#pragma unroll
+            for (int ITEM = 0; ITEM < KEYS_PER_ITEM; ++ITEM) {
+                int offset = lid * KEYS_PER_ITEM + ITEM;
+                if (offset < num_elements) {
+                    keys_out[b_offset + offset] = keys[ITEM];
+                    values_out[b_offset + offset] = values[ITEM];
+                }
+            }
         });
     if (l->is_sync_mode()) l->stream_sync();
 }

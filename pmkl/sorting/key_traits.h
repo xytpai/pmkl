@@ -5,6 +5,20 @@
 namespace pmkl {
 namespace sorting {
 
+struct NullType {
+    using value_type = NullType;
+    template <typename T>
+    HOST_DEVICE_INLINE NullType &operator=(const T &) {
+        return *this;
+    }
+    HOST_DEVICE_INLINE bool operator==(const NullType &) {
+        return true;
+    }
+    HOST_DEVICE_INLINE bool operator!=(const NullType &) {
+        return false;
+    }
+};
+
 template <typename Type>
 struct KeyTraits {};
 
