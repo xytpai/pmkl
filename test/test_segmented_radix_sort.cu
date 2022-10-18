@@ -16,8 +16,9 @@ int main() {
         using value_t = int;
         int num_segments = utils::host::randint_scalar(10, 50);
         int num_elements = utils::host::randint_scalar(10, 4096);
+        if (it == 10) num_elements = 4096;
         bool is_descending = utils::host::randint_scalar(0, 2) > 0;
-        cout << "testing sort num_segments[" << num_segments
+        cout << "testing sort pairs num_segments[" << num_segments
              << "] num_elements[" << num_elements << "] is_descending[" << is_descending << "]\n";
         int total_size = num_segments * num_elements;
         auto key = new key_t[total_size];
@@ -68,6 +69,39 @@ int main() {
         delete[] value_out;
         l->free(key_dev);
         l->free(value_dev);
+    }
+
+    for (int it = 0; it < 20; it++) {
+        using key_t = float;
+        int num_segments = utils::host::randint_scalar(10, 50);
+        int num_elements = utils::host::randint_scalar(10, 4096);
+        bool is_descending = utils::host::randint_scalar(0, 2) > 0;
+        cout << "testing sort num_segments[" << num_segments
+             << "] num_elements[" << num_elements << "] is_descending[" << is_descending << "]\n";
+        int total_size = num_segments * num_elements;
+        auto key = new key_t[total_size];
+        auto key_out = new key_t[total_size];
+        utils::host::fill_rand<key_t>(key, total_size, -10000.0, 10000.0);
+        auto key_dev = l->malloc<key_t>(total_size);
+        l->memcpy((void *)key_dev, (void *)key, total_size * sizeof(key_t), GpuLauncher::Direction::H2D);
+        l->stream_begin();
+        sorting::segmented_sort(key_dev, key_dev, num_segments, num_elements, is_descending);
+        l->stream_sync();
+        l->stream_end();
+        l->memcpy((void *)key_out, (void *)key_dev, total_size * sizeof(key_t), GpuLauncher::Direction::D2H);
+        for (int i = 0; i < num_segments; i++) {
+            auto key_begin = key + i * num_elements;
+            if (is_descending)
+                std::stable_sort(key_begin, key_begin + num_elements, [](key_t a, key_t b) { return a > b; });
+            else
+                std::stable_sort(key_begin, key_begin + num_elements, [](key_t a, key_t b) { return a < b; });
+        }
+        cout << "testing key...\n";
+        if (!all_close(key_out, key, total_size))
+            return 1;
+        delete[] key;
+        delete[] key_out;
+        l->free(key_dev);
     }
 
     cout << "ok" << endl;

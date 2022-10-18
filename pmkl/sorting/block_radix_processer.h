@@ -33,75 +33,119 @@ public:
         PACKING_RATIO = sizeof(CounterT) / sizeof(DigitT),
         COUNTER_LANES = RADIX_BUCKETS / PACKING_RATIO,
         LOG_COUNTER_LANES = Log2<COUNTER_LANES>::VALUE,
-        PACKED_SCAN_SIZE = COUNTER_LANES * BLOCK_THREADS * sizeof(CounterT),
         DIGIT_BITS = sizeof(DigitT) << 3,
-        DIGIT_MASK = (1 << DIGIT_BITS) - 1,
     };
 
 private:
+    union LocalStorage {
+        struct {
+            union {
+                CounterT counters[COUNTER_LANES][BLOCK_THREADS];
+                CounterT counters_flat[COUNTER_LANES * BLOCK_THREADS];
+                DigitT buckets[COUNTER_LANES][BLOCK_THREADS][PACKING_RATIO];
+            };
+        } rank_storage;
+        KeyTraitsT exchange_ukeys[PROCESSING_LENGTH];
+        ValueT exchange_values[PROCESSING_LENGTH];
+    };
+
     KernelInfo &info_;
+    LocalStorage &local_storage_;
     int lid_;
-    char *local_storage_;
 
 public:
     static int GetSharedLocalMemorySize() {
-        constexpr int KV_TYPE_SIZE = KEYS_ONLY ? sizeof(KeyT) : std::max(sizeof(KeyT), sizeof(ValueT));
-        constexpr int EXCHANGE_SIZE =
-            BLOCK_THREADS * KEYS_PER_THREAD * KV_TYPE_SIZE;
-        return std::max(EXCHANGE_SIZE, (int)PACKED_SCAN_SIZE);
+        return sizeof(LocalStorage);
     }
 
     DEVICE inline BlockRadixProcesser(KernelInfo &info) :
-        info_(info) {
-        lid_ = info_.thread_idx(0);
-        local_storage_ = reinterpret_cast<char *>(info_.shared_ptr());
+        info_(info), lid_(info.thread_idx(0)),
+        local_storage_(reinterpret_cast<LocalStorage &>(*info.shared_ptr())) {
     }
 
-    DEVICE inline void convert_keys(KeyTraitsT (&pkeys)[KEYS_PER_THREAD]) {
+    DEVICE inline void convert_keys(KeyTraitsT (&ukeys)[KEYS_PER_THREAD]) {
 #pragma unroll
         for (int ITEM = 0; ITEM < KEYS_PER_THREAD; ++ITEM) {
-            pkeys[ITEM] = KeyTraits<KeyT>::convert(
-                *reinterpret_cast<KeyT *>(&pkeys[ITEM]));
+            ukeys[ITEM] = KeyTraits<KeyT>::convert(
+                *reinterpret_cast<KeyT *>(&ukeys[ITEM]));
         }
     }
 
-    DEVICE inline void deconvert_keys(KeyTraitsT (&pkeys)[KEYS_PER_THREAD]) {
+    DEVICE inline void deconvert_keys(KeyTraitsT (&ukeys)[KEYS_PER_THREAD]) {
 #pragma unroll
         for (int ITEM = 0; ITEM < KEYS_PER_THREAD; ++ITEM) {
-            auto key = KeyTraits<KeyT>::deconvert(pkeys[ITEM]);
-            pkeys[ITEM] = *reinterpret_cast<KeyTraitsT *>(&key);
+            auto ukey = KeyTraits<KeyT>::deconvert(ukeys[ITEM]);
+            ukeys[ITEM] = *reinterpret_cast<KeyTraitsT *>(&ukey);
         }
     }
 
-    template <typename DataT>
-    DEVICE inline void exchange(
-        DataT (&data)[KEYS_PER_THREAD],
-        int (&rank)[KEYS_PER_THREAD]) {
-        auto local_storage = reinterpret_cast<DataT *>(local_storage_);
+    DEVICE inline void exchange_keys(
+        KeyTraitsT (&ukeys)[KEYS_PER_THREAD],
+        int (&ranks)[KEYS_PER_THREAD]) {
 #pragma unroll
         for (int ITEM = 0; ITEM < KEYS_PER_THREAD; ++ITEM) {
-            local_storage[rank[ITEM]] = data[ITEM];
+            local_storage_.exchange_ukeys[ranks[ITEM]] = ukeys[ITEM];
         }
         info_.barrier();
 #pragma unroll
         for (int ITEM = 0; ITEM < KEYS_PER_THREAD; ++ITEM) {
             int offset = lid_ * KEYS_PER_THREAD + ITEM;
-            data[ITEM] = local_storage[offset];
+            ukeys[ITEM] = local_storage_.exchange_ukeys[offset];
         }
         info_.barrier();
     }
 
-    template <typename DataT>
-    DEVICE inline void exchange(
-        DataT (&data)[KEYS_PER_THREAD],
-        int (&rank)[KEYS_PER_THREAD],
-        int lower_offset,
-        int upper_offset) {
-        auto local_storage = reinterpret_cast<DataT *>(local_storage_);
+    DEVICE inline void exchange_values(
+        ValueT (&values)[KEYS_PER_THREAD],
+        int (&ranks)[KEYS_PER_THREAD]) {
 #pragma unroll
         for (int ITEM = 0; ITEM < KEYS_PER_THREAD; ++ITEM) {
-            if (rank[ITEM] >= lower_offset && rank[ITEM] < upper_offset) {
-                local_storage[rank[ITEM] - lower_offset] = data[ITEM];
+            local_storage_.exchange_values[ranks[ITEM]] = values[ITEM];
+        }
+        info_.barrier();
+#pragma unroll
+        for (int ITEM = 0; ITEM < KEYS_PER_THREAD; ++ITEM) {
+            int offset = lid_ * KEYS_PER_THREAD + ITEM;
+            values[ITEM] = local_storage_.exchange_values[offset];
+        }
+        info_.barrier();
+    }
+
+    DEVICE inline void exchange_keys(
+        KeyTraitsT (&ukeys)[KEYS_PER_THREAD],
+        int (&ranks)[KEYS_PER_THREAD],
+        int lower_offset,
+        int upper_offset,
+        uint32_t *mask) {
+#pragma unroll
+        for (int ITEM = 0; ITEM < KEYS_PER_THREAD; ++ITEM) {
+            if (ranks[ITEM] >= lower_offset && ranks[ITEM] < upper_offset) {
+                local_storage_.exchange_ukeys[ranks[ITEM] - lower_offset] = ukeys[ITEM];
+            }
+        }
+        info_.barrier();
+        *mask = 0u;
+        int new_length = upper_offset - lower_offset;
+#pragma unroll
+        for (int ITEM = 0; ITEM < KEYS_PER_THREAD; ++ITEM) {
+            int offset = lid_ * KEYS_PER_THREAD + ITEM;
+            if (offset < new_length) {
+                *mask |= (1u << ITEM);
+                ukeys[ITEM] = local_storage_.exchange_ukeys[offset];
+            }
+        }
+        info_.barrier();
+    }
+
+    DEVICE inline void exchange_values(
+        ValueT (&values)[KEYS_PER_THREAD],
+        int (&ranks)[KEYS_PER_THREAD],
+        int lower_offset,
+        int upper_offset) {
+#pragma unroll
+        for (int ITEM = 0; ITEM < KEYS_PER_THREAD; ++ITEM) {
+            if (ranks[ITEM] >= lower_offset && ranks[ITEM] < upper_offset) {
+                local_storage_.exchange_values[ranks[ITEM] - lower_offset] = values[ITEM];
             }
         }
         info_.barrier();
@@ -110,7 +154,7 @@ public:
         for (int ITEM = 0; ITEM < KEYS_PER_THREAD; ++ITEM) {
             int offset = lid_ * KEYS_PER_THREAD + ITEM;
             if (offset < new_length) {
-                data[ITEM] = local_storage[offset];
+                values[ITEM] = local_storage_.exchange_values[offset];
             }
         }
         info_.barrier();
@@ -121,25 +165,23 @@ public:
     }
 
     DEVICE inline void rank_keys(
-        KeyTraitsT (&pkeys)[KEYS_PER_THREAD],
-        int (&rank)[KEYS_PER_THREAD],
+        KeyTraitsT (&ukeys)[KEYS_PER_THREAD],
+        int (&ranks)[KEYS_PER_THREAD],
         int begin_bit,
         int pass_bits) {
         DigitT *digit_counters[KEYS_PER_THREAD];
         DigitT sub_counters[KEYS_PER_THREAD];
-        auto scan_storage = reinterpret_cast<CounterT *>(local_storage_);
-        auto buckets = reinterpret_cast<DigitT(*)[BLOCK_THREADS][PACKING_RATIO]>(local_storage_);
 
         // reset buckets
 #pragma unroll
         for (int ITEM = 0; ITEM < COUNTER_LANES; ++ITEM) {
-            scan_storage[lid_ * COUNTER_LANES + ITEM] = 0;
+            local_storage_.rank_storage.counters[ITEM][lid_] = 0;
         }
         info_.barrier();
 
 #pragma unroll
         for (int ITEM = 0; ITEM < KEYS_PER_THREAD; ++ITEM) {
-            auto digit = extract_digit(pkeys[ITEM], begin_bit, pass_bits);
+            auto digit = extract_digit(ukeys[ITEM], begin_bit, pass_bits);
             auto sub_counter = digit >> LOG_COUNTER_LANES;
             auto counter_lane = digit & (COUNTER_LANES - 1);
             if (IS_DESCENDING) {
@@ -147,69 +189,230 @@ public:
                 counter_lane = COUNTER_LANES - 1 - counter_lane;
             }
             sub_counters[ITEM] = sub_counter;
-            digit_counters[ITEM] = &buckets[counter_lane][lid_][sub_counter];
-            rank[ITEM] = *digit_counters[ITEM];
-            *digit_counters[ITEM] = rank[ITEM] + 1;
+            digit_counters[ITEM] =
+                &local_storage_.rank_storage.buckets[counter_lane][lid_][sub_counter];
+            ranks[ITEM] = *digit_counters[ITEM];
+            *digit_counters[ITEM] = ranks[ITEM] + 1;
         }
         info_.barrier();
 
-        CounterT temp = block_aligned_exclusive_cumsum<
+        CounterT exclusive = block_aligned_exclusive_cumsum<
             CounterT,
             COUNTER_LANES,
-            BLOCK_THREADS>(info_, scan_storage, lid_);
+            BLOCK_THREADS>(
+            info_,
+            local_storage_.rank_storage.counters_flat,
+            lid_);
 
         CounterT c = 0;
 #pragma unroll
         for (int STEP = 1; STEP < PACKING_RATIO; ++STEP) {
-            temp = temp << DIGIT_BITS;
-            c += temp;
+            exclusive = exclusive << DIGIT_BITS;
+            c += exclusive;
         }
+        DigitT *prefix = reinterpret_cast<DigitT *>(&c);
 
         // inc rank
 #pragma unroll
         for (int ITEM = 0; ITEM < KEYS_PER_THREAD; ++ITEM) {
-            DigitT cc = (c >> (sub_counters[ITEM] * DIGIT_BITS)) & DIGIT_MASK;
-            rank[ITEM] += *digit_counters[ITEM] + cc;
+            ranks[ITEM] += *digit_counters[ITEM] + prefix[sub_counters[ITEM]];
+        }
+        info_.barrier();
+    }
+
+    DEVICE inline void find_select_offset(
+        DigitT *prefix,
+        int num_to_select,
+        int *out_offset_select,
+        int *out_offset_active) {
+        *out_offset_select = 0;
+        *out_offset_active = 0;
+#pragma unroll
+        for (int DIGIT = 1; DIGIT < RADIX_BUCKETS; ++DIGIT) {
+            auto sub_counter = DIGIT >> LOG_COUNTER_LANES;
+            auto counter_lane = DIGIT & (COUNTER_LANES - 1);
+            if (IS_DESCENDING) {
+                sub_counter = PACKING_RATIO - 1 - sub_counter;
+                counter_lane = COUNTER_LANES - 1 - counter_lane;
+            }
+            auto count = local_storage_.rank_storage.buckets[counter_lane][lid_][sub_counter]
+                         + prefix[sub_counter];
+            if (count > num_to_select) {
+                *out_offset_active = count;
+                break;
+            }
+            *out_offset_select = count;
+        }
+        if (*out_offset_active == 0) *out_offset_active = prefix[PACKING_RATIO - 1];
+    }
+
+    DEVICE inline void rank_keys(
+        KeyTraitsT (&ukeys)[KEYS_PER_THREAD],
+        int (&ranks)[KEYS_PER_THREAD],
+        int begin_bit,
+        int pass_bits,
+        uint32_t active_mask,
+        int num_to_select,
+        int *out_offset_select,
+        int *out_offset_active) {
+        DigitT *digit_counters[KEYS_PER_THREAD];
+        DigitT sub_counters[KEYS_PER_THREAD];
+
+        // reset buckets
+#pragma unroll
+        for (int ITEM = 0; ITEM < COUNTER_LANES; ++ITEM) {
+            local_storage_.rank_storage.counters[ITEM][lid_] = 0;
+        }
+        info_.barrier();
+
+#pragma unroll
+        for (int ITEM = 0; ITEM < KEYS_PER_THREAD; ++ITEM) {
+            ranks[ITEM] = PROCESSING_LENGTH;
+            if (active_mask >> ITEM & 1) {
+                auto digit = extract_digit(ukeys[ITEM], begin_bit, pass_bits);
+                auto sub_counter = digit >> LOG_COUNTER_LANES;
+                auto counter_lane = digit & (COUNTER_LANES - 1);
+                if (IS_DESCENDING) {
+                    sub_counter = PACKING_RATIO - 1 - sub_counter;
+                    counter_lane = COUNTER_LANES - 1 - counter_lane;
+                }
+                sub_counters[ITEM] = sub_counter;
+                digit_counters[ITEM] =
+                    &local_storage_.rank_storage.buckets[counter_lane][lid_][sub_counter];
+                ranks[ITEM] = *digit_counters[ITEM];
+                *digit_counters[ITEM] = ranks[ITEM] + 1;
+            }
+        }
+        info_.barrier();
+
+        CounterT exclusive = block_aligned_exclusive_cumsum<
+            CounterT,
+            COUNTER_LANES,
+            BLOCK_THREADS>(
+            info_,
+            local_storage_.rank_storage.counters_flat,
+            lid_);
+
+        CounterT c = 0;
+#pragma unroll
+        for (int STEP = 1; STEP < PACKING_RATIO; ++STEP) {
+            exclusive = exclusive << DIGIT_BITS;
+            c += exclusive;
+        }
+        DigitT *prefix = reinterpret_cast<DigitT *>(&c);
+
+        find_select_offset(prefix, num_to_select, out_offset_select, out_offset_active);
+
+        // inc rank
+#pragma unroll
+        for (int ITEM = 0; ITEM < KEYS_PER_THREAD; ++ITEM) {
+            if (active_mask >> ITEM & 1) {
+                ranks[ITEM] += *digit_counters[ITEM] + prefix[sub_counters[ITEM]];
+            }
         }
         info_.barrier();
     }
 
     DEVICE inline void sort_blocked(
-        KeyT (&pkeys)[KEYS_PER_THREAD],
-        ValueT (&pvalues)[KEYS_PER_THREAD],
+        KeyT (&keys)[KEYS_PER_THREAD],
+        ValueT (&values)[KEYS_PER_THREAD],
         int begin_bit,
         int end_bit) {
-        KeyTraitsT(&unsigned_keys)[KEYS_PER_THREAD] =
-            reinterpret_cast<KeyTraitsT(&)[KEYS_PER_THREAD]>(pkeys);
-        convert_keys(unsigned_keys);
+        KeyTraitsT(&ukeys)[KEYS_PER_THREAD] =
+            reinterpret_cast<KeyTraitsT(&)[KEYS_PER_THREAD]>(keys);
+        convert_keys(ukeys);
         while (true) {
             auto pass_bits = NUMERIC_MIN(RADIX_BITS, end_bit - begin_bit);
-            int rank[KEYS_PER_THREAD];
-            rank_keys(unsigned_keys, rank, begin_bit, pass_bits);
+            int ranks[KEYS_PER_THREAD];
+            rank_keys(ukeys, ranks, begin_bit, pass_bits);
             begin_bit += RADIX_BITS;
-            exchange<KeyTraitsT>(unsigned_keys, rank);
-            if (!KEYS_ONLY) exchange<ValueT>(pvalues, rank);
+            exchange_keys(ukeys, ranks);
+            if (!KEYS_ONLY) exchange_values(values, ranks);
             if (begin_bit >= end_bit) break;
         }
-        deconvert_keys(unsigned_keys);
+        deconvert_keys(ukeys);
     }
 
     DEVICE inline void sort_blocked(
-        KeyT (&pkeys)[KEYS_PER_THREAD],
+        KeyT (&keys)[KEYS_PER_THREAD],
         int begin_bit,
         int end_bit) {
-        KeyTraitsT(&unsigned_keys)[KEYS_PER_THREAD] =
-            reinterpret_cast<KeyTraitsT(&)[KEYS_PER_THREAD]>(pkeys);
-        convert_keys(unsigned_keys);
+        KeyTraitsT(&ukeys)[KEYS_PER_THREAD] =
+            reinterpret_cast<KeyTraitsT(&)[KEYS_PER_THREAD]>(keys);
+        convert_keys(ukeys);
         while (true) {
             auto pass_bits = NUMERIC_MIN(RADIX_BITS, end_bit - begin_bit);
-            int rank[KEYS_PER_THREAD];
-            rank_keys(unsigned_keys, rank, begin_bit, pass_bits);
+            int ranks[KEYS_PER_THREAD];
+            rank_keys(ukeys, ranks, begin_bit, pass_bits);
             begin_bit += RADIX_BITS;
-            exchange<KeyTraitsT>(unsigned_keys, rank);
+            exchange_keys(ukeys, ranks);
             if (begin_bit >= end_bit) break;
         }
-        deconvert_keys(unsigned_keys);
+        deconvert_keys(ukeys);
+    }
+
+    DEVICE inline void store_keys(
+        KeyTraitsT *out,
+        KeyTraitsT (&ukeys)[KEYS_PER_THREAD],
+        int (&ranks)[KEYS_PER_THREAD],
+        int offset_select,
+        int num_selected) {
+#pragma unroll
+        for (int ITEM = 0; ITEM < KEYS_PER_THREAD; ++ITEM) {
+            if (ranks[ITEM] < offset_select) {
+                auto ukey = KeyTraits<KeyT>::deconvert(ukeys[ITEM]);
+                out[num_selected + ranks[ITEM]] = *reinterpret_cast<KeyTraitsT *>(&ukey);
+            }
+        }
+    }
+
+    DEVICE inline void store_values(
+        ValueT *out,
+        ValueT (&values)[KEYS_PER_THREAD],
+        int (&ranks)[KEYS_PER_THREAD],
+        int offset_select,
+        int num_selected) {
+#pragma unroll
+        for (int ITEM = 0; ITEM < KEYS_PER_THREAD; ++ITEM) {
+            if (ranks[ITEM] < offset_select) {
+                out[num_selected + ranks[ITEM]] = values[ITEM];
+            }
+        }
+    }
+
+    DEVICE inline void select_blocked(
+        KeyT (&keys)[KEYS_PER_THREAD],
+        ValueT (&values)[KEYS_PER_THREAD],
+        int begin_bit,
+        int end_bit,
+        int num_topk,
+        KeyT *out_keys,
+        ValueT *out_values) {
+        KeyTraitsT(&ukeys)[KEYS_PER_THREAD] =
+            reinterpret_cast<KeyTraitsT(&)[KEYS_PER_THREAD]>(keys);
+        KeyTraitsT out_ukeys = reinterpret_cast<KeyTraitsT *>(out_keys);
+        convert_keys(ukeys);
+        uint32_t active_mask = 0xffffffff;
+        int num_selected = 0;
+        while (true) {
+            auto pass_bits = NUMERIC_MIN(RADIX_BITS, begin_bit - end_bit);
+            begin_bit -= pass_bits;
+            int ranks[KEYS_PER_THREAD];
+            int offset_select, offset_active;
+            rank_keys(ukeys, ranks, begin_bit, pass_bits,
+                      active_mask, num_topk - num_selected,
+                      &offset_select, &offset_active);
+            if (begin_bit == end_bit) offset_select = num_topk - num_selected;
+            if (offset_select > 0) {
+                store_keys(out_ukeys, ukeys, ranks, offset_select, num_selected);
+                if (!KEYS_ONLY)
+                    store_values(out_values, values, ranks, offset_select, num_selected);
+            }
+            num_selected += offset_select;
+            if (num_selected == num_topk) break;
+            exchange_keys(ukeys, ranks, offset_select, offset_active, &active_mask);
+            if (!KEYS_ONLY) exchange_values(values, ranks, offset_select, offset_active);
+        }
     }
 };
 
