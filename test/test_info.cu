@@ -1,4 +1,6 @@
+#ifndef DEBUG
 #define DEBUG
+#endif
 
 #include "pmkl.h"
 #include <iostream>

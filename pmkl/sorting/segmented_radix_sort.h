@@ -161,6 +161,7 @@ inline void segmented_sort_(const key_t *keys_in, key_t *keys_out,
 template <typename key_t>
 void segmented_sort(const key_t *keys_in, key_t *keys_out,
                     int num_segments, int num_elements, bool descending) {
+    if (num_segments * num_elements == 0) return;
     if (descending)
         segmented_sort_<key_t, true>(
             keys_in, keys_out,

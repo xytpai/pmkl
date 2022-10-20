@@ -222,6 +222,7 @@ public:
 
     DEVICE inline void find_select_offset(
         DigitT *prefix,
+        int carry,
         int num_to_select,
         int *out_offset_select,
         int *out_offset_active) {
@@ -231,19 +232,15 @@ public:
         for (int DIGIT = 1; DIGIT < RADIX_BUCKETS; ++DIGIT) {
             auto sub_counter = DIGIT >> LOG_COUNTER_LANES;
             auto counter_lane = DIGIT & (COUNTER_LANES - 1);
-            if (IS_DESCENDING) {
-                sub_counter = PACKING_RATIO - 1 - sub_counter;
-                counter_lane = COUNTER_LANES - 1 - counter_lane;
-            }
-            auto count = local_storage_.rank_storage.buckets[counter_lane][lid_][sub_counter]
-                         + prefix[sub_counter];
+            auto count = (int)(local_storage_.rank_storage.buckets[counter_lane][0][sub_counter])
+                         + (int)prefix[sub_counter];
             if (count > num_to_select) {
                 *out_offset_active = count;
                 break;
             }
             *out_offset_select = count;
         }
-        if (*out_offset_active == 0) *out_offset_active = prefix[PACKING_RATIO - 1];
+        if (*out_offset_active == 0) *out_offset_active = carry;
     }
 
     DEVICE inline void rank_keys(
@@ -293,6 +290,13 @@ public:
             local_storage_.rank_storage.counters_flat,
             lid_);
 
+        DigitT *exclusive_ = reinterpret_cast<DigitT *>(&exclusive);
+        int carry = 0;
+#pragma unroll
+        for (int STEP = 0; STEP < PACKING_RATIO; ++STEP) {
+            carry += exclusive_[STEP];
+        }
+
         CounterT c = 0;
 #pragma unroll
         for (int STEP = 1; STEP < PACKING_RATIO; ++STEP) {
@@ -301,7 +305,7 @@ public:
         }
         DigitT *prefix = reinterpret_cast<DigitT *>(&c);
 
-        find_select_offset(prefix, num_to_select, out_offset_select, out_offset_active);
+        find_select_offset(prefix, carry, num_to_select, out_offset_select, out_offset_active);
 
         // inc rank
 #pragma unroll
@@ -390,7 +394,7 @@ public:
         ValueT *out_values) {
         KeyTraitsT(&ukeys)[KEYS_PER_THREAD] =
             reinterpret_cast<KeyTraitsT(&)[KEYS_PER_THREAD]>(keys);
-        KeyTraitsT out_ukeys = reinterpret_cast<KeyTraitsT *>(out_keys);
+        KeyTraitsT *out_ukeys = reinterpret_cast<KeyTraitsT *>(out_keys);
         convert_keys(ukeys);
         uint32_t active_mask = 0xffffffff;
         int num_selected = 0;
