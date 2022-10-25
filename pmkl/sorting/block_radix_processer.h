@@ -47,6 +47,7 @@ private:
         } rank_storage;
         KeyTraitsT exchange_ukeys[PROCESSING_LENGTH];
         ValueT exchange_values[PROCESSING_LENGTH];
+        int valid_items[BLOCK_THREADS];
     };
 
     KernelInfo &info_;
@@ -416,6 +417,55 @@ public:
             if (num_selected == num_topk) break;
             exchange_keys(ukeys, ranks, offset_select, offset_active, &active_mask);
             if (!KEYS_ONLY) exchange_values(values, ranks, offset_select, offset_active);
+        }
+    }
+
+    DEVICE inline void select_blocked(
+        KeyT (&keys)[KEYS_PER_THREAD],
+        ValueT (&values)[KEYS_PER_THREAD],
+        int begin_bit,
+        int end_bit,
+        int num_topk,
+        KeyT threshold,
+        KeyT *out_keys,
+        ValueT *out_values,
+        int *out_num_valids) {
+        int num_local_valids = 0;
+#pragma unroll
+        for (int ITEM = 0; ITEM < KEYS_PER_THREAD; ++ITEM) {
+            if (keys[ITEM] >= threshold) num_local_valids++;
+        }
+
+        local_storage_.valid_items[lid_] = num_local_valids;
+        info_.barrier();
+
+        int num_block_valids = block_aligned_exclusive_cumsum<
+            int,
+            1,
+            BLOCK_THREADS>(
+            info_,
+            local_storage_.valid_items,
+            lid_);
+
+        int offset = local_storage_.valid_items[lid_];
+        info_.barrier();
+
+        if (num_block_valids == 0) {
+            *out_num_valids = 0;
+        } else if (num_block_valids <= num_topk) {
+#pragma unroll
+            for (int ITEM = 0; ITEM < KEYS_PER_THREAD; ++ITEM) {
+                if (keys[ITEM] >= threshold) {
+                    out_keys[offset] = keys[ITEM];
+                    out_values[offset] = values[ITEM];
+                    offset++;
+                }
+            }
+            *out_num_valids = num_block_valids;
+        } else {
+            *out_num_valids = num_topk;
+            select_blocked(keys, values, begin_bit,
+                           end_bit, num_topk, out_keys, out_values);
         }
     }
 };
