@@ -8,6 +8,7 @@ include_directories(${ROOTDIR}/pmkl/memory)
 include_directories(${ROOTDIR}/pmkl/sorting)
 include_directories(${ROOTDIR}/pmkl/tensor)
 include_directories(${ROOTDIR}/pmkl/utils)
+include_directories(${ROOTDIR}/pmkl/image/nms)
 
 aux_source_directory(${ROOTDIR}/test DEV_SRCS)
 message("Source files: ${DEV_SRCS}")
