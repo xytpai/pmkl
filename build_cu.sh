@@ -2,6 +2,8 @@
 
 find . -name "*.c" -o -name "*.cpp" -o -name "*.h" -o -name "*.hpp" -o -name "*.cu" | xargs clang-format -style=file -i
 
+python __build_sync_cu.py
+
 mkdir -p build
 cd build
 
