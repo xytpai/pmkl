@@ -81,7 +81,7 @@ int main() {
     l->memcpy((void *)b, (void *)ref_b, aw * bw * sizeof(float), GpuLauncher::Direction::H2D);
     l->stream_begin();
     l->submit(
-        16 * 16 * sizeof(float), {bw / 16 + 1, ah / 16 + 1}, {16, 16},
+        2 * 16 * 16 * sizeof(float), {bw / 16 + 1, ah / 16 + 1}, {16, 16},
         [=] DEVICE(KernelInfo & info) {
             matmul_kernel(info, a, ah, aw, b, bw, c);
         });
