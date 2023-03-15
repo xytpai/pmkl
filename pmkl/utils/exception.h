@@ -5,7 +5,7 @@
 #include <sstream>
 #include <vector>
 
-#include "string.h"
+#include "xstring.h"
 
 namespace pmkl {
 namespace utils {
