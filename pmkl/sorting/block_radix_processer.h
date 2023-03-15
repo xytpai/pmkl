@@ -37,14 +37,14 @@ public:
     };
 
 private:
+    union RankT {
+        CounterT counters[COUNTER_LANES][BLOCK_THREADS];
+        CounterT counters_flat[COUNTER_LANES * BLOCK_THREADS];
+        DigitT buckets[COUNTER_LANES][BLOCK_THREADS][PACKING_RATIO];
+    };
+
     union LocalStorage {
-        struct {
-            union {
-                CounterT counters[COUNTER_LANES][BLOCK_THREADS];
-                CounterT counters_flat[COUNTER_LANES * BLOCK_THREADS];
-                DigitT buckets[COUNTER_LANES][BLOCK_THREADS][PACKING_RATIO];
-            };
-        } rank_storage;
+        RankT rank_storage;
         KeyTraitsT exchange_ukeys[PROCESSING_LENGTH];
         ValueT exchange_values[PROCESSING_LENGTH];
         int valid_items[BLOCK_THREADS];
@@ -171,7 +171,6 @@ public:
         int begin_bit,
         int pass_bits) {
         DigitT *digit_counters[KEYS_PER_THREAD];
-        DigitT sub_counters[KEYS_PER_THREAD];
 
         // reset buckets
 #pragma unroll
@@ -189,7 +188,6 @@ public:
                 sub_counter = PACKING_RATIO - 1 - sub_counter;
                 counter_lane = COUNTER_LANES - 1 - counter_lane;
             }
-            sub_counters[ITEM] = sub_counter;
             digit_counters[ITEM] =
                 &local_storage_.rank_storage.buckets[counter_lane][lid_][sub_counter];
             ranks[ITEM] = *digit_counters[ITEM];
@@ -211,18 +209,22 @@ public:
             exclusive = exclusive << DIGIT_BITS;
             c += exclusive;
         }
-        DigitT *prefix = reinterpret_cast<DigitT *>(&c);
+
+#pragma unroll
+        for (int INDEX = 0; INDEX < COUNTER_LANES; ++INDEX) {
+            local_storage_.rank_storage.counters[INDEX][lid_] += c;
+        }
+        info_.barrier();
 
         // inc rank
 #pragma unroll
         for (int ITEM = 0; ITEM < KEYS_PER_THREAD; ++ITEM) {
-            ranks[ITEM] += *digit_counters[ITEM] + prefix[sub_counters[ITEM]];
+            ranks[ITEM] += *digit_counters[ITEM];
         }
         info_.barrier();
     }
 
     DEVICE inline void find_select_offset(
-        DigitT *prefix,
         int carry,
         int num_to_select,
         int *out_offset_select,
@@ -233,8 +235,7 @@ public:
         for (int DIGIT = 1; DIGIT < RADIX_BUCKETS; ++DIGIT) {
             auto sub_counter = DIGIT >> LOG_COUNTER_LANES;
             auto counter_lane = DIGIT & (COUNTER_LANES - 1);
-            auto count = (int)(local_storage_.rank_storage.buckets[counter_lane][0][sub_counter])
-                         + (int)prefix[sub_counter];
+            auto count = (int)(local_storage_.rank_storage.buckets[counter_lane][0][sub_counter]);
             if (count > num_to_select) {
                 *out_offset_active = count;
                 break;
@@ -254,7 +255,6 @@ public:
         int *out_offset_select,
         int *out_offset_active) {
         DigitT *digit_counters[KEYS_PER_THREAD];
-        DigitT sub_counters[KEYS_PER_THREAD];
 
         // reset buckets
 #pragma unroll
@@ -274,7 +274,6 @@ public:
                     sub_counter = PACKING_RATIO - 1 - sub_counter;
                     counter_lane = COUNTER_LANES - 1 - counter_lane;
                 }
-                sub_counters[ITEM] = sub_counter;
                 digit_counters[ITEM] =
                     &local_storage_.rank_storage.buckets[counter_lane][lid_][sub_counter];
                 ranks[ITEM] = *digit_counters[ITEM];
@@ -304,15 +303,20 @@ public:
             exclusive = exclusive << DIGIT_BITS;
             c += exclusive;
         }
-        DigitT *prefix = reinterpret_cast<DigitT *>(&c);
 
-        find_select_offset(prefix, carry, num_to_select, out_offset_select, out_offset_active);
+#pragma unroll
+        for (int INDEX = 0; INDEX < COUNTER_LANES; ++INDEX) {
+            local_storage_.rank_storage.counters[INDEX][lid_] += c;
+        }
+        info_.barrier();
+
+        find_select_offset(carry, num_to_select, out_offset_select, out_offset_active);
 
         // inc rank
 #pragma unroll
         for (int ITEM = 0; ITEM < KEYS_PER_THREAD; ++ITEM) {
             if (active_mask >> ITEM & 1) {
-                ranks[ITEM] += *digit_counters[ITEM] + prefix[sub_counters[ITEM]];
+                ranks[ITEM] += *digit_counters[ITEM];
             }
         }
         info_.barrier();

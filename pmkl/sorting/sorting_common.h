@@ -37,12 +37,15 @@ in0  in1  in2  in3  |  in4  in5  in6  in7
 STEPS should be Log2<WARP_SIZE>::VALUE
 */
 template <typename T, int STEPS>
-DEVICE inline void warp_aligned_cumsum(const int wid, const T input, T &inclusive_sum, T &exclusive_sum) {
+DEVICE inline void warp_aligned_cumsum(KernelInfo &info, const int wid, const T input, T &inclusive_sum, T &exclusive_sum) {
     inclusive_sum = input;
 #pragma unroll
-    for (int i = 0, offset = 1; i < STEPS; ++i, offset <<= 1) {
+    for (int i = 0; i < STEPS; ++i) {
+        uint32_t offset = 1u << i;
 #if defined(USE_CUDA)
         T temp = __shfl_up_sync(0xffffffff, inclusive_sum, offset);
+#elif defined(USE_DPCPP)
+        T temp = sycl::shift_group_right(info.item_.get_sub_group(), inclusive_sum, offset);
 #endif
         if (wid >= offset) inclusive_sum += temp;
     }
@@ -66,12 +69,18 @@ DEVICE inline T block_aligned_cumsum(KernelInfo &info, T *storage, const int lid
     const int NUM_WARPS = THREADS / WARP_SIZE;
     const int WARP_CUMSUM_STEPS = Log2<WARP_SIZE>::VALUE;
 
+#if defined(USE_CUDA)
     int warp_local_id = lid % WARP_SIZE;
     int warp_id = lid / WARP_SIZE;
+#elif defined(USE_DPCPP)
+    auto sg = info.item_.get_sub_group();
+    int warp_local_id = sg.get_local_id();
+    int warp_id = sg.get_group_linear_id();
+#endif
     int lane_temp_values[COUNTER_LANES];
 
     // Read input lane sum
-    auto storage_lanes = storage + lid * COUNTER_LANES;
+    auto storage_lanes = &storage[lid * COUNTER_LANES];
     T lane_all_sum = 0;
 
     if (EXCLUSIVE) {
@@ -91,6 +100,7 @@ DEVICE inline T block_aligned_cumsum(KernelInfo &info, T *storage, const int lid
     // Get warp level exclusive sum
     T warp_inclusive_sum, warp_exclusive_sum;
     warp_aligned_cumsum<T, WARP_CUMSUM_STEPS>(
+        info,
         warp_local_id,
         lane_all_sum,
         warp_inclusive_sum,

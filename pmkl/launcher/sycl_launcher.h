@@ -227,7 +227,7 @@ public:
         size_t slm_size,
         std::vector<int> grid_size,
         std::vector<int> block_size,
-        func_t fn, args_t &&...args) {
+        func_t fn, args_t &&... args) {
         std::array<int, 3> groups, group_items;
         if (block_size.size() == 1) {
             group_items[0] = 1;
@@ -261,7 +261,7 @@ public:
             h.parallel_for(
                 sycl::nd_range<3>(sycl::range<3>(groups[0], groups[1], groups[2]),
                                   sycl::range<3>(group_items[0], group_items[1], group_items[2])),
-                [=](sycl::nd_item<3> item) {
+                [=](sycl::nd_item<3> item) [[intel::reqd_sub_group_size(32)]] {
                     auto info = KernelInfo(item, slm);
                     fn(info, std::forward<args_t>(args)...);
                 });
