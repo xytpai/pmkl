@@ -69,8 +69,9 @@ class Tensor;
 Tensor empty(std::vector<uint64_t> shape, ScalarType dtype, int device = 0);
 Tensor zeros(std::vector<uint64_t> shape, ScalarType dtype, int device = 0);
 
+typedef memory::array<uint64_t, MAX_TENSOR_DIM> dim_array_t;
+
 class Tensor {
-    using dim_array_t = memory::array<uint64_t, MAX_TENSOR_DIM>;
     int dim_;
     dim_array_t shape_;
     dim_array_t stride_;
@@ -85,13 +86,26 @@ class Tensor {
         storage_.unsafe_set_ptr(ptr);
     }
     friend Tensor empty(std::vector<uint64_t> shape, ScalarType dtype, int device);
+    friend Tensor empty(uint64_t *shape, int ndim, ScalarType dtype, int device);
     friend Tensor zeros(std::vector<uint64_t> shape, ScalarType dtype, int device);
+    friend std::ostream &operator<<(std::ostream &os, const Tensor &t);
 
 public:
     Tensor(std::vector<uint64_t> &shape, ScalarType dtype) :
         dtype_(dtype) {
         CHECK_FAIL(shape.size() <= MAX_TENSOR_DIM);
         dim_ = shape.size();
+        numel_ = 1;
+        for (int i = dim_ - 1; i >= 0; i--) {
+            stride_[i] = numel_;
+            numel_ *= shape[i];
+            shape_[i] = shape[i];
+        }
+    }
+    Tensor(uint64_t *shape, int ndim, ScalarType dtype) :
+        dtype_(dtype) {
+        CHECK_FAIL(ndim <= MAX_TENSOR_DIM);
+        dim_ = ndim;
         numel_ = 1;
         for (int i = dim_ - 1; i >= 0; i--) {
             stride_[i] = numel_;
@@ -148,10 +162,19 @@ public:
     intrusive_ptr<memory::TensorStorage> storage() const {
         return storage_;
     }
+    ScalarType dtype() const {
+        return dtype_;
+    }
 };
 
 Tensor empty(std::vector<uint64_t> shape, ScalarType dtype, int device) {
     Tensor output(shape, dtype);
+    output.new_storage_(device);
+    return output;
+}
+
+Tensor empty(uint64_t *shape, int ndim, ScalarType dtype, int device) {
+    Tensor output(shape, ndim, dtype);
     output.new_storage_(device);
     return output;
 }
@@ -161,6 +184,44 @@ Tensor zeros(std::vector<uint64_t> shape, ScalarType dtype, int device) {
     output.new_storage_(device);
     GpuLauncher::GetInstance()->memset(output.data_ptr(), 0, output.storage_bytes());
     return output;
+}
+
+std::ostream &operator<<(std::ostream &os, const Tensor &t) {
+    os << "Tensor\nshape:";
+    for (int i = 0; i < t.dim_; ++i)
+        os << t.shape_[i] << ",";
+    os << "\nstride:";
+    for (int i = 0; i < t.dim_; ++i)
+        os << t.stride_[i] << ",";
+    os << "\ndtype:";
+    switch (t.dtype_) {
+    case ScalarType::Byte:
+        os << "Byte";
+        break;
+    case ScalarType::Char:
+        os << "Char";
+        break;
+    case ScalarType::Short:
+        os << "Short";
+        break;
+    case ScalarType::Int:
+        os << "Int";
+        break;
+    case ScalarType::Long:
+        os << "Long";
+        break;
+    case ScalarType::Float:
+        os << "Float";
+        break;
+    case ScalarType::Double:
+        os << "Double";
+        break;
+    case ScalarType::Bool:
+        os << "Bool";
+        break;
+    }
+    os << "\n";
+    return os;
 }
 
 } // namespace pmkl
