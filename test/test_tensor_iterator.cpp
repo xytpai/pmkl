@@ -34,8 +34,8 @@ int main() {
 
     // Tensor oo = empty({12, 32, 44}, ScalarType::Float, 0);
     Tensor oo;
-    Tensor aa = empty({12, 32, 1}, ScalarType::Float, 0);
-    Tensor bb = empty({12, 1, 44}, ScalarType::Float, 0);
+    Tensor aa = empty({12, 32, 44}, ScalarType::Float, 0);
+    Tensor bb = empty({12, 32, 44}, ScalarType::Float, 0);
     auto iter2 = TensorIterator().add_output(oo).add_input(aa).add_input(bb).build_for_loops();
 
     std::cout << iter2 << std::endl;

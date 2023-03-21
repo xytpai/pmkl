@@ -67,6 +67,7 @@ using namespace memory;
 
 class Tensor;
 Tensor empty(std::vector<uint64_t> shape, ScalarType dtype, int device = 0);
+Tensor empty(uint64_t *shape, int ndim, ScalarType dtype, int device, bool inverse = false);
 Tensor zeros(std::vector<uint64_t> shape, ScalarType dtype, int device = 0);
 
 typedef memory::array<uint64_t, MAX_TENSOR_DIM> dim_array_t;
@@ -86,7 +87,7 @@ class Tensor {
         storage_.unsafe_set_ptr(ptr);
     }
     friend Tensor empty(std::vector<uint64_t> shape, ScalarType dtype, int device);
-    friend Tensor empty(uint64_t *shape, int ndim, ScalarType dtype, int device);
+    friend Tensor empty(uint64_t *shape, int ndim, ScalarType dtype, int device, bool inverse);
     friend Tensor zeros(std::vector<uint64_t> shape, ScalarType dtype, int device);
     friend std::ostream &operator<<(std::ostream &os, const Tensor &t);
 
@@ -102,15 +103,20 @@ public:
             shape_[i] = shape[i];
         }
     }
-    Tensor(uint64_t *shape, int ndim, ScalarType dtype) :
+    Tensor(uint64_t *shape, int ndim, ScalarType dtype, bool inverse) :
         dtype_(dtype) {
         CHECK_FAIL(ndim <= MAX_TENSOR_DIM);
         dim_ = ndim;
         numel_ = 1;
+        int is;
         for (int i = dim_ - 1; i >= 0; i--) {
             stride_[i] = numel_;
-            numel_ *= shape[i];
-            shape_[i] = shape[i];
+            if (!inverse)
+                is = i;
+            else
+                is = dim_ - 1 - i;
+            numel_ *= shape[is];
+            shape_[i] = shape[is];
         }
     }
     Tensor(const Tensor &other) :
@@ -165,6 +171,9 @@ public:
     ScalarType dtype() const {
         return dtype_;
     }
+    dim_array_t &stride() {
+        return stride_;
+    }
 };
 
 Tensor empty(std::vector<uint64_t> shape, ScalarType dtype, int device) {
@@ -173,8 +182,8 @@ Tensor empty(std::vector<uint64_t> shape, ScalarType dtype, int device) {
     return output;
 }
 
-Tensor empty(uint64_t *shape, int ndim, ScalarType dtype, int device) {
-    Tensor output(shape, ndim, dtype);
+Tensor empty(uint64_t *shape, int ndim, ScalarType dtype, int device, bool inverse) {
+    Tensor output(shape, ndim, dtype, inverse);
     output.new_storage_(device);
     return output;
 }

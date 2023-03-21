@@ -84,9 +84,11 @@ private:
                 strides_temp[i][j] = strides_[i][j];
         for (int i = 0; i < ndim_; ++i)
             shape_[i] = shape_temp[perm_[i]];
-        for (int i = 0; i < num_tensors_; ++i)
+        for (int i = 0; i < num_tensors_; ++i) {
+            if (!tensors_[i].defined()) continue;
             for (int j = 0; j < ndim_; ++j)
                 strides_[i][j] = strides_temp[i][perm_[j]];
+        }
     }
 
     void reorder_dimensions() {
@@ -112,6 +114,7 @@ private:
                 } else if (stride0 > stride1) {
                     return 1;
                 } else {
+                    // for equal strides, the dimension with smaller size goes front
                     auto t_dim0 = shape_[dim0];
                     auto t_dim1 = shape_[dim1];
                     //return only if dimensions should be swapped, otherwise move on to the next tensor
@@ -145,9 +148,59 @@ private:
         auto dtype = tensors_[num_outputs_].dtype();
         for (int i = 0; i < num_outputs_; ++i) {
             if (!tensors_[i].defined()) {
-                tensors_[i] = std::move(empty(shape_, ndim_, dtype, device));
+                tensors_[i] = std::move(empty(shape_, ndim_, dtype, device, true));
+                auto &stride = tensors_[i].stride();
+                for (int d = 0; d < ndim_; ++d) {
+                    strides_[i][d] = stride[ndim_ - 1 - d];
+                }
             }
         }
+    }
+
+    void coalesce_dimensions() {
+        if (ndim_ <= 1) return;
+        // We can coalesce two adjacent dimensions if either dim has size 1 or if:
+        // shape[n] * stride[n] == stride[n + 1].
+        auto can_coalesce = [&](int dim0, int dim1) {
+            auto shape0 = shape_[dim0];
+            auto shape1 = shape_[dim1];
+            if (shape0 == 1 || shape1 == 1) {
+                return true;
+            }
+            for (int i = 0; i < num_tensors_; ++i) {
+                auto stride0 = strides_[i][dim0];
+                auto stride1 = strides_[i][dim1];
+                if (shape0 * stride0 != stride1) {
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        // replace each operands stride at dim0 with its stride at dim1
+        auto replace_stride = [&](int dim0, int dim1) {
+            for (int i = 0; i < num_tensors_; ++i) {
+                strides_[i][dim0] = strides_[i][dim1];
+            }
+        };
+
+        int prev_dim = 0;
+        for (int dim = 1; dim < ndim_; ++dim) {
+            if (can_coalesce(prev_dim, dim)) {
+                if (shape_[prev_dim] == 1) {
+                    replace_stride(prev_dim, dim);
+                }
+                shape_[prev_dim] *= shape_[dim];
+            } else {
+                prev_dim++;
+                if (prev_dim != dim) {
+                    replace_stride(prev_dim, dim);
+                    shape_[prev_dim] = shape_[dim];
+                }
+            }
+        }
+
+        ndim_ = prev_dim + 1;
     }
 
 public:
@@ -186,6 +239,7 @@ public:
         compute_strides();
         reorder_dimensions();
         allocate_outputs();
+        coalesce_dimensions();
         return *this;
     }
 
