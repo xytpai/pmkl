@@ -1,6 +1,7 @@
 #pragma once
 
 #include <iostream>
+#include <type_traits>
 
 namespace pmkl {
 
@@ -49,11 +50,24 @@ static inline size_t element_size(ScalarType t) {
     return 0;
 }
 
-#undef FORALL_BASIC_SCALAR_TYPES
-
 std::ostream &operator<<(std::ostream &os, const ScalarType &dtype) {
     os << to_string(dtype);
     return os;
 }
+
+template <typename T>
+struct CppTypeToScalarType;
+
+#define SPECIALIZE_CppTypeToScalarType(cpp_type, scalar_type)          \
+    template <>                                                        \
+    struct CppTypeToScalarType<cpp_type>                               \
+        : std::                                                        \
+              integral_constant<ScalarType, ScalarType::scalar_type> { \
+    };
+
+FORALL_BASIC_SCALAR_TYPES(SPECIALIZE_CppTypeToScalarType)
+
+#undef FORALL_BASIC_SCALAR_TYPES
+#undef SPECIALIZE_CppTypeToScalarType
 
 } // namespace pmkl

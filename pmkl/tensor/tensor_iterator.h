@@ -3,6 +3,7 @@
 #include <iostream>
 #include <ostream>
 #include <vector>
+#include <limits>
 
 #include "tensor.h"
 #include "exception.h"
@@ -16,9 +17,9 @@ class TensorIterator final {
 
 private:
     Tensor *tensors_[MAX_TENSORS];
-    uint64_t shape_[MAX_TENSOR_DIM];
-    uint64_t strides_[MAX_TENSORS][MAX_TENSOR_DIM];
-    uint64_t perm_[MAX_TENSOR_DIM];
+    int64_t shape_[MAX_TENSOR_DIM];
+    int64_t stride_bytes_[MAX_TENSORS][MAX_TENSOR_DIM];
+    int64_t perm_[MAX_TENSOR_DIM];
     int num_outputs_ = 0;
     int num_inputs_ = 0;
     int num_tensors_ = 0;
@@ -45,7 +46,7 @@ private:
     void compute_shape() {
         for (int i = ndim_ - 1; i >= 0; --i) {
             bool is_first = true;
-            uint64_t sz;
+            int64_t sz;
             for (int j = 0; j < num_tensors_; ++j) {
                 if (!tensors_[j]->defined()) continue;
                 if (is_first) {
@@ -65,30 +66,31 @@ private:
         for (int id = 0; id < num_tensors_; ++id) {
             auto t = tensors_[id];
             if (!t->defined()) continue;
+            auto element_size_in_bytes = t->element_size_in_bytes();
             for (int i = ndim_ - 1; i >= 0; --i) {
                 if (t->shape(i) == 1 && shape_[i] != 1) {
-                    strides_[id][i] = 0;
+                    stride_bytes_[id][i] = 0;
                 } else {
-                    strides_[id][i] = t->stride(i);
+                    stride_bytes_[id][i] = t->stride(i) * element_size_in_bytes;
                 }
             }
         }
     }
 
     void permute_dimensions() {
-        uint64_t shape_temp[MAX_TENSOR_DIM];
-        uint64_t strides_temp[MAX_TENSORS][MAX_TENSOR_DIM];
+        int64_t shape_temp[MAX_TENSOR_DIM];
+        int64_t strides_temp[MAX_TENSORS][MAX_TENSOR_DIM];
         for (int i = 0; i < ndim_; ++i)
             shape_temp[i] = shape_[i];
         for (int i = 0; i < num_tensors_; ++i)
             for (int j = 0; j < ndim_; ++j)
-                strides_temp[i][j] = strides_[i][j];
+                strides_temp[i][j] = stride_bytes_[i][j];
         for (int i = 0; i < ndim_; ++i)
             shape_[i] = shape_temp[perm_[i]];
         for (int i = 0; i < num_tensors_; ++i) {
             if (!tensors_[i]->defined()) continue;
             for (int j = 0; j < ndim_; ++j)
-                strides_[i][j] = strides_temp[i][perm_[j]];
+                stride_bytes_[i][j] = strides_temp[i][perm_[j]];
         }
     }
 
@@ -105,8 +107,8 @@ private:
         auto should_swap = [&](size_t dim0, size_t dim1) {
             for (int arg = 0; arg < num_tensors_; ++arg) {
                 if (!tensors_[arg]->defined()) continue;
-                uint64_t stride0 = tensors_[arg]->stride(dim0);
-                uint64_t stride1 = tensors_[arg]->stride(dim1);
+                int64_t stride0 = tensors_[arg]->stride(dim0);
+                int64_t stride1 = tensors_[arg]->stride(dim1);
                 if (stride0 == 0 || stride1 == 0) {
                     //move on to the next input if one of the dimensions is broadcasted
                     continue;
@@ -153,14 +155,14 @@ private:
                 if (!is_reordered_) {
                     *tensors_[i] = std::move(empty(shape_, ndim_, dtype, device, false));
                 } else {
-                    uint64_t shape[MAX_TENSOR_DIM];
+                    int64_t shape[MAX_TENSOR_DIM];
                     for (int k = 0; k < ndim_; ++k)
                         shape[perm_[k]] = shape_[k];
                     *tensors_[i] = std::move(empty(shape, ndim_, dtype, device, false));
                 }
                 auto &stride = tensors_[i]->stride();
                 for (int d = 0; d < ndim_; ++d) {
-                    strides_[i][d] = stride[ndim_ - 1 - d];
+                    stride_bytes_[i][d] = stride[ndim_ - 1 - d] * element_size(dtype);
                 }
             }
         }
@@ -177,8 +179,8 @@ private:
                 return true;
             }
             for (int i = 0; i < num_tensors_; ++i) {
-                auto stride0 = strides_[i][dim0];
-                auto stride1 = strides_[i][dim1];
+                auto stride0 = stride_bytes_[i][dim0];
+                auto stride1 = stride_bytes_[i][dim1];
                 if (shape0 * stride0 != stride1) {
                     return false;
                 }
@@ -189,7 +191,7 @@ private:
         // replace each operands stride at dim0 with its stride at dim1
         auto replace_stride = [&](int dim0, int dim1) {
             for (int i = 0; i < num_tensors_; ++i) {
-                strides_[i][dim0] = strides_[i][dim1];
+                stride_bytes_[i][dim0] = stride_bytes_[i][dim1];
             }
         };
 
@@ -256,20 +258,75 @@ public:
         return shape_[dim];
     }
 
-    int stride(int arg, int dim) const {
-        return strides_[arg][dim];
+    int stride_bytes(int arg, int dim) const {
+        return stride_bytes_[arg][dim];
     }
 
     int dim() const {
         return ndim_;
     }
 
-    uint64_t perm(int dim) const {
+    int ndim() const {
+        return ndim_;
+    }
+
+    int64_t perm(int dim) const {
         return perm_[dim];
     }
 
     Tensor &outputs(int arg) {
         return *tensors_[arg];
+    }
+
+    int64_t numel() const {
+        int64_t numel = 1;
+        for (int64_t size : shape_) {
+            numel *= size;
+        }
+        return numel;
+    }
+
+    bool can_use_32bit_indexing() const {
+        int64_t max_value = std::numeric_limits<int32_t>::max();
+        if (numel() > max_value) {
+            return false;
+        }
+        for (int i = 0; i < num_tensors_; ++i) {
+            int64_t max_offset = 1;
+            for (int d = 0; d < ndim(); ++d) {
+                max_offset += (shape_[d] - 1) * stride_bytes_[i][d];
+            }
+            if (max_offset > max_value) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool has_contiguous_first_dim() const {
+        for (int i = 0; i < num_tensors_; ++i) {
+            if (stride_bytes_[i][0] != tensors_[i]->element_size_in_bytes()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool is_contiguous() const {
+        if (numel() == 1) {
+            return true;
+        }
+        if (ndim() != 1) {
+            return false;
+        }
+        return has_contiguous_first_dim();
+    }
+
+    ScalarType input_dtype(int arg = 0) const {
+        return tensors_[num_outputs_ + arg]->dtype();
+    }
+    ScalarType dtype(int arg = 0) const {
+        return tensors_[arg]->dtype();
     }
 };
 
@@ -279,9 +336,9 @@ std::ostream &operator<<(std::ostream &os, const TensorIterator &iter) {
         os << iter.shape(i) << ",";
     os << "\b],\n\t";
     for (int i = 0; i < iter.ntensors(); ++i) {
-        os << "strides_" << i << "=[";
+        os << "stride_bytes_" << i << "=[";
         for (int j = 0; j < iter.dim(); ++j)
-            os << iter.stride(i, j) << ",";
+            os << iter.stride_bytes(i, j) << ",";
         os << "\b],\n\t";
     }
     os << "perm=[";

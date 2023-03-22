@@ -66,18 +66,18 @@ public:
 using namespace memory;
 
 class Tensor;
-Tensor empty(std::vector<uint64_t> shape, ScalarType dtype, int device = 0);
-Tensor empty(uint64_t *shape, int ndim, ScalarType dtype, int device, bool inverse = false);
-Tensor zeros(std::vector<uint64_t> shape, ScalarType dtype, int device = 0);
+Tensor empty(std::vector<int64_t> shape, ScalarType dtype, int device = 0);
+Tensor empty(int64_t *shape, int ndim, ScalarType dtype, int device, bool inverse = false);
+Tensor zeros(std::vector<int64_t> shape, ScalarType dtype, int device = 0);
 
-typedef memory::array<uint64_t, MAX_TENSOR_DIM> dim_t;
+typedef memory::array<int64_t, MAX_TENSOR_DIM> dim_t;
 
 class Tensor {
     int dim_;
     dim_t shape_;
     dim_t stride_;
     ScalarType dtype_;
-    uint64_t numel_;
+    int64_t numel_;
 
     intrusive_ptr<memory::TensorStorage> storage_;
 
@@ -86,12 +86,12 @@ class Tensor {
         auto ptr = new memory::TensorStorage(bytes, device);
         storage_.unsafe_set_ptr(ptr);
     }
-    friend Tensor empty(std::vector<uint64_t> shape, ScalarType dtype, int device);
-    friend Tensor empty(uint64_t *shape, int ndim, ScalarType dtype, int device, bool inverse);
-    friend Tensor zeros(std::vector<uint64_t> shape, ScalarType dtype, int device);
+    friend Tensor empty(std::vector<int64_t> shape, ScalarType dtype, int device);
+    friend Tensor empty(int64_t *shape, int ndim, ScalarType dtype, int device, bool inverse);
+    friend Tensor zeros(std::vector<int64_t> shape, ScalarType dtype, int device);
 
 public:
-    Tensor(std::vector<uint64_t> &shape, ScalarType dtype) :
+    Tensor(std::vector<int64_t> &shape, ScalarType dtype) :
         dtype_(dtype) {
         CHECK_FAIL(shape.size() <= MAX_TENSOR_DIM);
         dim_ = shape.size();
@@ -102,7 +102,7 @@ public:
             shape_[i] = shape[i];
         }
     }
-    Tensor(uint64_t *shape, int ndim, ScalarType dtype, bool inverse) :
+    Tensor(int64_t *shape, int ndim, ScalarType dtype, bool inverse) :
         dtype_(dtype) {
         CHECK_FAIL(ndim <= MAX_TENSOR_DIM);
         dim_ = ndim;
@@ -140,7 +140,7 @@ public:
     bool defined() const {
         return storage_.get() != nullptr;
     }
-    uint64_t numel() const {
+    int64_t numel() const {
         return numel_;
     }
     int dim() const {
@@ -149,10 +149,10 @@ public:
     int device() const {
         return storage_.get()->device();
     }
-    uint64_t shape(int d) const {
+    int64_t shape(int d) const {
         return shape_[d];
     }
-    uint64_t stride(int d) const {
+    int64_t stride(int d) const {
         return stride_[d];
     }
     void *data_ptr() const {
@@ -173,21 +173,24 @@ public:
     dim_t &stride() {
         return stride_;
     }
+    int64_t element_size_in_bytes() const {
+        return element_size(dtype_);
+    }
 };
 
-Tensor empty(std::vector<uint64_t> shape, ScalarType dtype, int device) {
+Tensor empty(std::vector<int64_t> shape, ScalarType dtype, int device) {
     Tensor output(shape, dtype);
     output.new_storage_(device);
     return output;
 }
 
-Tensor empty(uint64_t *shape, int ndim, ScalarType dtype, int device, bool inverse) {
+Tensor empty(int64_t *shape, int ndim, ScalarType dtype, int device, bool inverse) {
     Tensor output(shape, ndim, dtype, inverse);
     output.new_storage_(device);
     return output;
 }
 
-Tensor zeros(std::vector<uint64_t> shape, ScalarType dtype, int device) {
+Tensor zeros(std::vector<int64_t> shape, ScalarType dtype, int device) {
     Tensor output(shape, dtype);
     output.new_storage_(device);
     GpuLauncher::GetInstance()->memset(output.data_ptr(), 0, output.storage_bytes());

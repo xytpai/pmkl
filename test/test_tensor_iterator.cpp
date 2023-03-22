@@ -31,7 +31,17 @@ int main() {
         if (iter.tensor(3).shape(4) != 5) return 1;
         if (iter.tensor(3).shape(3) != 4) return 1;
 
+        if (iter.is_contiguous() == true) return 1;
+
         iter.build_for_loops();
+    }
+
+    {
+        Tensor left = empty({12, 32, 44}, ScalarType::Float, 0);
+        Tensor right = empty({12, 32, 44}, ScalarType::Float, 0);
+        Tensor out;
+        auto iter = TensorIterator().add_output(out).add_input(left).add_input(right).build_for_loops();
+        if (iter.is_contiguous() == false) return 1;
     }
 
     {
@@ -43,11 +53,13 @@ int main() {
         if (out.shape(0) != 12) return 1;
         if (out.shape(1) != 32) return 1;
         if (out.shape(2) != 44) return 1;
-        if (iter.stride(1, 2) != 0) return 1;
-        if (iter.stride(2, 0) != 0) return 1;
-        if (iter.stride(0, 2) != 1408) return 1;
-        // cout << out << endl;
-        // cout << iter << endl;
+        if (iter.stride_bytes(1, 2) != 0) return 1;
+        if (iter.stride_bytes(2, 0) != 0) return 1;
+        if (iter.stride_bytes(0, 2) != 1408 * 4) return 1;
+        if (iter.is_contiguous() == true) return 1;
+
+        cout << out << endl;
+        cout << iter << endl;
     }
 
     cout << "ok\n";
