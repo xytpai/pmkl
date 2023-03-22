@@ -1,5 +1,7 @@
 #pragma once
 
+#include <iostream>
+
 namespace pmkl {
 
 #define FORALL_BASIC_SCALAR_TYPES(_) \
@@ -48,5 +50,10 @@ static inline size_t element_size(ScalarType t) {
 }
 
 #undef FORALL_BASIC_SCALAR_TYPES
+
+std::ostream &operator<<(std::ostream &os, const ScalarType &dtype) {
+    os << to_string(dtype);
+    return os;
+}
 
 } // namespace pmkl

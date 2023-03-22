@@ -70,12 +70,12 @@ Tensor empty(std::vector<uint64_t> shape, ScalarType dtype, int device = 0);
 Tensor empty(uint64_t *shape, int ndim, ScalarType dtype, int device, bool inverse = false);
 Tensor zeros(std::vector<uint64_t> shape, ScalarType dtype, int device = 0);
 
-typedef memory::array<uint64_t, MAX_TENSOR_DIM> dim_array_t;
+typedef memory::array<uint64_t, MAX_TENSOR_DIM> dim_t;
 
 class Tensor {
     int dim_;
-    dim_array_t shape_;
-    dim_array_t stride_;
+    dim_t shape_;
+    dim_t stride_;
     ScalarType dtype_;
     uint64_t numel_;
 
@@ -89,7 +89,6 @@ class Tensor {
     friend Tensor empty(std::vector<uint64_t> shape, ScalarType dtype, int device);
     friend Tensor empty(uint64_t *shape, int ndim, ScalarType dtype, int device, bool inverse);
     friend Tensor zeros(std::vector<uint64_t> shape, ScalarType dtype, int device);
-    friend std::ostream &operator<<(std::ostream &os, const Tensor &t);
 
 public:
     Tensor(std::vector<uint64_t> &shape, ScalarType dtype) :
@@ -171,7 +170,7 @@ public:
     ScalarType dtype() const {
         return dtype_;
     }
-    dim_array_t &stride() {
+    dim_t &stride() {
         return stride_;
     }
 };
@@ -196,40 +195,15 @@ Tensor zeros(std::vector<uint64_t> shape, ScalarType dtype, int device) {
 }
 
 std::ostream &operator<<(std::ostream &os, const Tensor &t) {
-    os << "Tensor\nshape:";
-    for (int i = 0; i < t.dim_; ++i)
-        os << t.shape_[i] << ",";
-    os << "\nstride:";
-    for (int i = 0; i < t.dim_; ++i)
-        os << t.stride_[i] << ",";
-    os << "\ndtype:";
-    switch (t.dtype_) {
-    case ScalarType::Byte:
-        os << "Byte";
-        break;
-    case ScalarType::Char:
-        os << "Char";
-        break;
-    case ScalarType::Short:
-        os << "Short";
-        break;
-    case ScalarType::Int:
-        os << "Int";
-        break;
-    case ScalarType::Long:
-        os << "Long";
-        break;
-    case ScalarType::Float:
-        os << "Float";
-        break;
-    case ScalarType::Double:
-        os << "Double";
-        break;
-    case ScalarType::Bool:
-        os << "Bool";
-        break;
-    }
-    os << "\n";
+    os << "Tensor(shape=[";
+    for (int i = 0; i < t.dim(); ++i)
+        os << t.shape(i) << ",";
+    os << "\b], stride=[";
+    for (int i = 0; i < t.dim(); ++i)
+        os << t.stride(i) << ",";
+    os << "\b], dtype=" << t.dtype();
+    os << ", numel=" << t.numel() << ", dim=" << t.dim();
+    os << ", device=" << t.device() << ")";
     return os;
 }
 
