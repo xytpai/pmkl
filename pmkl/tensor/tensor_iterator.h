@@ -17,9 +17,9 @@ class TensorIterator final {
 
 private:
     Tensor *tensors_[MAX_TENSORS];
-    int64_t shape_[MAX_TENSOR_DIM];
-    int64_t stride_bytes_[MAX_TENSORS][MAX_TENSOR_DIM];
-    int64_t perm_[MAX_TENSOR_DIM];
+    int64_t shape_[MAX_TENSOR_DIMS];
+    int64_t stride_bytes_[MAX_TENSORS][MAX_TENSOR_DIMS];
+    int64_t perm_[MAX_TENSOR_DIMS];
     int num_outputs_ = 0;
     int num_inputs_ = 0;
     int num_tensors_ = 0;
@@ -78,8 +78,8 @@ private:
     }
 
     void permute_dimensions() {
-        int64_t shape_temp[MAX_TENSOR_DIM];
-        int64_t strides_temp[MAX_TENSORS][MAX_TENSOR_DIM];
+        int64_t shape_temp[MAX_TENSOR_DIMS];
+        int64_t strides_temp[MAX_TENSORS][MAX_TENSOR_DIMS];
         for (int i = 0; i < ndim_; ++i)
             shape_temp[i] = shape_[i];
         for (int i = 0; i < num_tensors_; ++i)
@@ -155,7 +155,7 @@ private:
                 if (!is_reordered_) {
                     *tensors_[i] = std::move(empty(shape_, ndim_, dtype, device, false));
                 } else {
-                    int64_t shape[MAX_TENSOR_DIM];
+                    int64_t shape[MAX_TENSOR_DIMS];
                     for (int k = 0; k < ndim_; ++k)
                         shape[perm_[k]] = shape_[k];
                     *tensors_[i] = std::move(empty(shape, ndim_, dtype, device, false));
@@ -254,12 +254,20 @@ public:
         return *this;
     }
 
-    int shape(int dim) const {
+    int64_t shape(int dim) const {
         return shape_[dim];
     }
 
-    int stride_bytes(int arg, int dim) const {
+    int64_t *shape() {
+        return shape_;
+    }
+
+    int64_t stride_bytes(int arg, int dim) const {
         return stride_bytes_[arg][dim];
+    }
+
+    int64_t *strides(int arg) {
+        return stride_bytes_[arg];
     }
 
     int dim() const {
@@ -280,8 +288,8 @@ public:
 
     int64_t numel() const {
         int64_t numel = 1;
-        for (int64_t size : shape_) {
-            numel *= size;
+        for (int i = 0; i < ndim_; ++i) {
+            numel *= shape_[i];
         }
         return numel;
     }
@@ -327,6 +335,12 @@ public:
     }
     ScalarType dtype(int arg = 0) const {
         return tensors_[arg]->dtype();
+    }
+    void *data_ptr(int arg) const {
+        return tensors_[arg]->data_ptr();
+    }
+    int64_t element_size_in_bytes(int arg) const {
+        return tensors_[arg]->element_size_in_bytes();
     }
 };
 

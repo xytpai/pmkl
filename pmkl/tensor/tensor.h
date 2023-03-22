@@ -61,7 +61,7 @@ public:
 
 } // namespace memory
 
-#define MAX_TENSOR_DIM 12
+#define MAX_TENSOR_DIMS 12
 
 using namespace memory;
 
@@ -70,7 +70,7 @@ Tensor empty(std::vector<int64_t> shape, ScalarType dtype, int device = 0);
 Tensor empty(int64_t *shape, int ndim, ScalarType dtype, int device, bool inverse = false);
 Tensor zeros(std::vector<int64_t> shape, ScalarType dtype, int device = 0);
 
-typedef memory::array<int64_t, MAX_TENSOR_DIM> dim_t;
+typedef memory::array<int64_t, MAX_TENSOR_DIMS> dim_t;
 
 class Tensor {
     int dim_;
@@ -93,7 +93,7 @@ class Tensor {
 public:
     Tensor(std::vector<int64_t> &shape, ScalarType dtype) :
         dtype_(dtype) {
-        CHECK_FAIL(shape.size() <= MAX_TENSOR_DIM);
+        CHECK_FAIL(shape.size() <= MAX_TENSOR_DIMS);
         dim_ = shape.size();
         numel_ = 1;
         for (int i = dim_ - 1; i >= 0; i--) {
@@ -104,7 +104,7 @@ public:
     }
     Tensor(int64_t *shape, int ndim, ScalarType dtype, bool inverse) :
         dtype_(dtype) {
-        CHECK_FAIL(ndim <= MAX_TENSOR_DIM);
+        CHECK_FAIL(ndim <= MAX_TENSOR_DIMS);
         dim_ = ndim;
         numel_ = 1;
         int is;
