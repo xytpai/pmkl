@@ -154,7 +154,7 @@ struct vectorized_load_helper {
     }
 };
 
-template <int THREAD_WORK_SIZE, int vec_size, typename data_t, typename inp_calc_t, typename out_calc_t>
+template <int THREAD_WORK_SIZE, int vec_size, typename data_t, typename inp_calc_t>
 struct vectorized {
     static_assert(THREAD_WORK_SIZE % vec_size == 0, "The workload per thread must be a multiple of vec_size");
     static constexpr int loop_size = THREAD_WORK_SIZE / vec_size;
@@ -165,7 +165,7 @@ struct vectorized {
     int block_size;
     int block_work_size;
 
-    DEVICE vectorized(data_t data, inp_calc_t ic, out_calc_t oc, int tid, int bid, int block_size) :
+    DEVICE vectorized(data_t data, inp_calc_t ic, int tid, int bid, int block_size) :
         data(data), input_offset_calculator(ic), tid(tid), bid(bid),
         block_size(block_size), block_work_size(THREAD_WORK_SIZE * block_size) {
     }
@@ -284,7 +284,7 @@ struct multi_outputs_unroll {
 } // namespace policies
 
 template <typename scalar_t>
-inline HOST_DEVICE int can_vectorize_up_to(char *pointer) {
+HOST_DEVICE_INLINE int can_vectorize_up_to(char *pointer) {
     uint64_t address = reinterpret_cast<uint64_t>(pointer);
     constexpr int vec2_alignment = std::alignment_of<memory::aligned_array<scalar_t, 2>>::value;
     constexpr int vec4_alignment = std::alignment_of<memory::aligned_array<scalar_t, 4>>::value;

@@ -1,15 +1,17 @@
 #pragma once
 
+#include "launcher.h"
+
 namespace pmkl {
 namespace memory {
 
 template <typename T, int vec_size>
 struct alignas(sizeof(T) * vec_size) aligned_array {
     T val[vec_size];
-    T &operator[](int i) {
+    HOST_DEVICE_INLINE T &operator[](int i) {
         return val[i];
     }
-    T const &operator[](int i) const {
+    HOST_DEVICE_INLINE T const &operator[](int i) const {
         return val[i];
     }
 };
@@ -17,10 +19,10 @@ struct alignas(sizeof(T) * vec_size) aligned_array {
 template <typename T, int vec_size>
 struct array {
     T val[vec_size];
-    T &operator[](int i) {
+    HOST_DEVICE_INLINE T &operator[](int i) {
         return val[i];
     }
-    T const &operator[](int i) const {
+    HOST_DEVICE_INLINE T const &operator[](int i) const {
         return val[i];
     }
 };

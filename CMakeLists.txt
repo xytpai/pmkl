@@ -24,6 +24,7 @@ if(CUDA_FOUND)
     message("Source files: ${DEV_SRCS}")
 
     list(APPEND CUDA_NVCC_FLAGS "--expt-extended-lambda")
+    list(APPEND CUDA_NVCC_FLAGS "--expt-relaxed-constexpr")
     list(APPEND CUDA_NVCC_FLAGS "--std=c++17")
     foreach(EXAMPLE ${DEV_SRCS})
         string(REGEX REPLACE ".+/(.+)\\..*" "\\1" FILE_EXAMPLE ${EXAMPLE})

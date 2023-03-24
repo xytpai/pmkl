@@ -63,68 +63,76 @@ DEVICE_INLINE void elementwise_kernel_helper(func_t f, policy_t policy) {
     policy.store(results);
 }
 
-// template<typename func_t, typename array_t, typename inp_calc_t>
-// static inline void launch_vectorized_kernel(int64_t N, const func_t& f, array_t data, inp_calc_t input_calc, int vec_size) {
-//   CHECK_FAIL(N > 0 && N <= std::numeric_limits<int32_t>::max());
-//   using traits = function_traits<func_t>;
-//   int64_t grid = (N + block_work_size() - 1) / block_work_size();
+template <int THREAD_WORK_SIZE, int vec_size, typename func_t, typename array_t, typename inp_calc_t>
+void vectorized_elementwise_kernel(int N, func_t f, array_t data, inp_calc_t inp_calc) {
+    using traits = function_traits<func_t>;
+    auto l = GpuLauncher::GetInstance();
+    int block_size = l->work_size_for_loops();
+    int block_work_size = vec_size * block_size;
+    l->submit(
+        0, {(N + block_work_size - 1) / block_work_size}, {block_size},
+        [=] DEVICE(KernelInfo & info) {
+            int remaining = N - block_work_size * info.block_idx(0);
+            if (remaining < block_work_size) {
+                auto output_calc = TrivialOffsetCalculator<1>();
+                auto loader = memory_access::LoadWithoutCast();
+                auto storer = memory_access::StoreWithoutCast();
+                auto policy = memory_access::policies::unroll<THREAD_WORK_SIZE, array_t,
+                                                              decltype(inp_calc), decltype(output_calc),
+                                                              memory_access::LoadWithoutCast, memory_access::StoreWithoutCast>(
+                    data, remaining, inp_calc, output_calc, loader, storer,
+                    info.thread_idx(0), info.block_idx(0), info.thread_range(0));
+                elementwise_kernel_helper<THREAD_WORK_SIZE>(f, policy);
+            } else {
+                elementwise_kernel_helper<THREAD_WORK_SIZE>(f, memory_access::policies::vectorized<
+                                                                   THREAD_WORK_SIZE, vec_size, array_t, inp_calc_t>(
+                                                                   data, inp_calc, info.thread_idx(0), info.block_idx(0), info.thread_range(0)));
+            }
+        });
+}
 
-//   auto stream = at::cuda::getCurrentCUDAStream();
-//   int vec_size = memory::can_vectorize_up_to<func_t>(data);
+template <int THREAD_WORK_SIZE, typename func_t, typename array_t, typename inp_calc_t, typename out_calc_t, typename loader_t, typename storer_t>
+static inline void launch_unrolled_kernel(int N, const func_t &f, array_t data,
+                                          inp_calc_t ic, out_calc_t oc, loader_t ld, storer_t st) {
+    CHECK_FAIL(N > 0 && N <= std::numeric_limits<int32_t>::max());
+    auto l = GpuLauncher::GetInstance();
+    int block_size = l->work_size_for_loops();
+    int block_work_size = THREAD_WORK_SIZE * block_size;
+    l->submit(
+        0, {(N + block_work_size - 1) / block_work_size}, {block_size},
+        [=] DEVICE(KernelInfo & info) {
+            int remaining = N - block_work_size * info.block_idx(0);
+            auto policy = memory_access::policies::unroll<THREAD_WORK_SIZE, array_t,
+                                                          inp_calc_t, out_calc_t, loader_t, storer_t>(data, remaining, ic, oc, ld, st,
+                                                                                                      info.thread_idx(0), info.block_idx(0), info.thread_range(0));
+            elementwise_kernel_helper<THREAD_WORK_SIZE>(f, policy);
+        });
+}
 
-//   switch (vec_size) {
-//   case 4:
-//     vectorized_elementwise_kernel<4, func_t, array_t><<<grid, num_threads(), 0, stream>>>(N, f, data);
-//     C10_CUDA_KERNEL_LAUNCH_CHECK();
-//     break;
-//   case 2:
-//     vectorized_elementwise_kernel<2, func_t, array_t><<<grid, num_threads(), 0, stream>>>(N, f, data);
-//     C10_CUDA_KERNEL_LAUNCH_CHECK();
-//     break;
-//   case 1: {
-//     auto input_calc = TrivialOffsetCalculator<traits::arity>();
-//     auto output_calc = TrivialOffsetCalculator<1>();
-//     auto loader = memory::LoadWithoutCast();
-//     auto storer = memory::StoreWithoutCast();
-//     unrolled_elementwise_kernel<func_t, array_t><<<grid, num_threads(), 0, stream>>>(N, f, data, input_calc, output_calc, loader, storer);
-//     C10_CUDA_KERNEL_LAUNCH_CHECK();
-//     break;
-//   }
-//   default:
-//     TORCH_INTERNAL_ASSERT(false, "Unexpected vectorization size");
-//   }
-// }
-
-// template<typename func_t, typename array_t>
-// static inline void launch_vectorized_kernel(int64_t N, const func_t& f, array_t data) {
-//   CHECK_FAIL(N > 0 && N <= std::numeric_limits<int32_t>::max());
-//   using traits = function_traits<func_t>;
-//   int64_t grid = (N + block_work_size() - 1) / block_work_size();
-//   auto stream = at::cuda::getCurrentCUDAStream();
-//   int vec_size = memory::can_vectorize_up_to<func_t>(data);
-
-//   switch (vec_size) {
-//   case 4:
-//     vectorized_elementwise_kernel<4, func_t, array_t><<<grid, num_threads(), 0, stream>>>(N, f, data);
-//     C10_CUDA_KERNEL_LAUNCH_CHECK();
-//     break;
-//   case 2:
-//     vectorized_elementwise_kernel<2, func_t, array_t><<<grid, num_threads(), 0, stream>>>(N, f, data);
-//     C10_CUDA_KERNEL_LAUNCH_CHECK();
-//     break;
-//   case 1: {
-//     auto input_calc = TrivialOffsetCalculator<traits::arity>();
-//     auto output_calc = TrivialOffsetCalculator<1>();
-//     auto loader = memory::LoadWithoutCast();
-//     auto storer = memory::StoreWithoutCast();
-//     unrolled_elementwise_kernel<func_t, array_t><<<grid, num_threads(), 0, stream>>>(N, f, data, input_calc, output_calc, loader, storer);
-//     C10_CUDA_KERNEL_LAUNCH_CHECK();
-//     break;
-//   }
-//   default:
-//     TORCH_INTERNAL_ASSERT(false, "Unexpected vectorization size");
-//   }
-// }
+template <typename func_t, typename array_t, typename inp_calc_t>
+static inline void launch_vectorized_kernel(int64_t N, const func_t &f, array_t data, inp_calc_t input_calc, int vec_size) {
+    CHECK_FAIL(N > 0 && N <= std::numeric_limits<int32_t>::max());
+    switch (vec_size) {
+    case 8:
+        vectorized_elementwise_kernel<8, 8, func_t, array_t, inp_calc_t>(N, f, data, input_calc);
+        break;
+    case 4:
+        vectorized_elementwise_kernel<4, 4, func_t, array_t, inp_calc_t>(N, f, data, input_calc);
+        break;
+    case 2:
+        vectorized_elementwise_kernel<2, 2, func_t, array_t, inp_calc_t>(N, f, data, input_calc);
+        break;
+    case 1: {
+        auto output_calc = TrivialOffsetCalculator<1>();
+        auto loader = memory_access::LoadWithoutCast();
+        auto storer = memory_access::StoreWithoutCast();
+        launch_unrolled_kernel<4, func_t, array_t, inp_calc_t>(
+            N, f, data, input_calc, output_calc, loader, storer);
+        break;
+    }
+    default:;
+    }
+}
 
 template <typename func_t>
 void gpu_kernel_impl(TensorIterator &iter, const func_t &f) {
@@ -147,17 +155,19 @@ void gpu_kernel_impl(TensorIterator &iter, const func_t &f) {
     bool dynamic_casting = needs_dynamic_casting<func_t>::check(iter);
 
     if (!dynamic_casting) {
-        // if (contiguous) {
-        //     launch_vectorized_kernel(numel, f, data);
-        // } else {
-        //     auto offset_calc = ::make_offset_calculator<traits::arity + 1>(iter);
-        //     constexpr int unroll_factor = sizeof(arg0_t) >= 4 ? 2 : 4;
-        //     launch_legacy_kernel<128, unroll_factor>(numel, [=] GPU_LAMBDA(int idx) {
-        //         auto offsets = offset_calc.get(idx);
-        //         arg0_t *out = (arg0_t *)(data[0] + offsets[0]);
-        //         *out = invoke(f, &data.data[1], &offsets.data[1], 1);
-        //     });
-        // }
+        if (contiguous) {
+            int vec_size = memory_access::can_vectorize_up_to<func_t>(data);
+            auto input_calc = TrivialOffsetCalculator<traits::arity>();
+            launch_vectorized_kernel(numel, f, data, input_calc, vec_size);
+        } else {
+            //     auto offset_calc = ::make_offset_calculator<traits::arity + 1>(iter);
+            //     constexpr int unroll_factor = sizeof(arg0_t) >= 4 ? 2 : 4;
+            //     launch_legacy_kernel<128, unroll_factor>(numel, [=] GPU_LAMBDA(int idx) {
+            //         auto offsets = offset_calc.get(idx);
+            //         arg0_t *out = (arg0_t *)(data[0] + offsets[0]);
+            //         *out = invoke(f, &data.data[1], &offsets.data[1], 1);
+            //     });
+        }
     } else {
         //     if (contiguous) {
         //         at::detail::Array<ScalarType, traits::arity> dtypes;

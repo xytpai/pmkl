@@ -217,6 +217,10 @@ public:
         return max_thread_per_block();
     }
 
+    int work_size_for_loops() const {
+        return max_thread_per_block() / 4;
+    }
+
     size_t shared_local_memory_size() const {
         return device_shared_memory_[current_device_];
     }
