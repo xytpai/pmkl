@@ -9,6 +9,7 @@
 #include "tensor.h"
 #include "tensor_iterator.h"
 #include "array.h"
+#include "exception.h"
 
 namespace pmkl {
 
@@ -170,6 +171,31 @@ static OffsetCalculator<N, uint32_t, signed_strides> make_element_offset_calcula
     }
     return OffsetCalculator<N, uint32_t, signed_strides>(
         iter.ndim(), iter.shape(), strides.data(), element_sizes.data());
+}
+
+template <int N, bool signed_strides = false>
+static OffsetCalculator<N, uint32_t, signed_strides> make_input_offset_calculator(TensorIterator &iter) {
+    constexpr int array_size = std::max<int>(N, 1);
+    CHECK_FAIL(N == iter.ntensors() - iter.noutputs());
+    std::array<const int64_t *, array_size> strides;
+    int64_t element_sizes[array_size];
+    for (int i = 0; i < N; i++) {
+        strides[i] = iter.strides(i + iter.noutputs());
+        element_sizes[i] = iter.element_size_in_bytes(i + iter.noutputs());
+    }
+    return OffsetCalculator<N, uint32_t, signed_strides>(iter.ndim(), iter.shape(), strides.data(), element_sizes);
+}
+
+template <int num_outputs = 1, bool signed_strides = false>
+static OffsetCalculator<num_outputs, uint32_t, signed_strides> make_output_offset_calculator(TensorIterator &iter) {
+    CHECK_FAIL(num_outputs == iter.noutputs());
+    std::array<const int64_t *, num_outputs> strides;
+    int64_t element_sizes[num_outputs];
+    for (int i = 0; i < num_outputs; i++) {
+        strides[i] = iter.strides(i);
+        element_sizes[i] = iter.element_size_in_bytes(i);
+    }
+    return OffsetCalculator<num_outputs, uint32_t, signed_strides>(iter.ndim(), iter.shape(), strides.data(), element_sizes);
 }
 
 } // namespace pmkl

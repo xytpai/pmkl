@@ -3,6 +3,8 @@
 #include <iostream>
 #include <type_traits>
 
+#include "launcher.h"
+
 namespace pmkl {
 
 #define FORALL_BASIC_SCALAR_TYPES(_) \
@@ -66,6 +68,32 @@ struct CppTypeToScalarType;
     };
 
 FORALL_BASIC_SCALAR_TYPES(SPECIALIZE_CppTypeToScalarType)
+
+#define FETCH_AND_CAST_CASE(type, scalartype) \
+    case ScalarType::scalartype:              \
+        return static_cast<type>(*(const type *)ptr);
+template <typename dest_t>
+HOST_DEVICE_INLINE dest_t fetch_and_cast(const ScalarType src_type, const void *ptr) {
+    switch (src_type) {
+        FORALL_BASIC_SCALAR_TYPES(FETCH_AND_CAST_CASE)
+    default:;
+    }
+    return dest_t(0);
+}
+#undef FETCH_AND_CAST_CASE
+
+#define CAST_AND_STORE_CASE(type, scalartype)    \
+    case ScalarType::scalartype:                 \
+        *(type *)ptr = static_cast<type>(value); \
+        return;
+template <typename src_t>
+HOST_DEVICE_INLINE void cast_and_store(const ScalarType dest_type, void *ptr, src_t value) {
+    switch (dest_type) {
+        FORALL_BASIC_SCALAR_TYPES(CAST_AND_STORE_CASE)
+    default:;
+    }
+}
+#undef CAST_AND_STORE_CASE
 
 #undef FORALL_BASIC_SCALAR_TYPES
 #undef SPECIALIZE_CppTypeToScalarType

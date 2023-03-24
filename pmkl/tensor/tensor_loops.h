@@ -1,8 +1,13 @@
 #pragma once
 
+#include <limits>
+#include <tuple>
+#include <utility>
+
 #include "function_traits.h"
 #include "tensor_iterator.h"
-#include "tensor_offset.h"
+#include "tensor_offset_calculator.h"
+#include "tensor_memory_access.h"
 #include "exception.h"
 #include "array.h"
 
@@ -35,6 +40,91 @@ struct needs_dynamic_casting<func_t, 0> {
         return true;
     }
 };
+
+template <class F, class Tuple>
+HOST_DEVICE_INLINE constexpr decltype(auto) pmkl_loops_apply(F &&f, Tuple &&t) {
+    return std::apply(std::forward<F>(f), std::forward<Tuple>(t));
+}
+
+template <int THREAD_WORK_SIZE, typename func_t, typename policy_t>
+DEVICE_INLINE void elementwise_kernel_helper(func_t f, policy_t policy) {
+    using traits = function_traits<func_t>;
+    using return_t = typename traits::result_type;
+    using args_t = typename traits::ArgsTuple;
+    return_t results[THREAD_WORK_SIZE];
+    args_t args[THREAD_WORK_SIZE];
+    policy.load(args);
+#pragma unroll
+    for (int i = 0; i < THREAD_WORK_SIZE; i++) {
+        if (policy.check_inbounds(i)) {
+            results[i] = pmkl_loops_apply(f, args[i]);
+        }
+    }
+    policy.store(results);
+}
+
+// template<typename func_t, typename array_t, typename inp_calc_t>
+// static inline void launch_vectorized_kernel(int64_t N, const func_t& f, array_t data, inp_calc_t input_calc, int vec_size) {
+//   CHECK_FAIL(N > 0 && N <= std::numeric_limits<int32_t>::max());
+//   using traits = function_traits<func_t>;
+//   int64_t grid = (N + block_work_size() - 1) / block_work_size();
+
+//   auto stream = at::cuda::getCurrentCUDAStream();
+//   int vec_size = memory::can_vectorize_up_to<func_t>(data);
+
+//   switch (vec_size) {
+//   case 4:
+//     vectorized_elementwise_kernel<4, func_t, array_t><<<grid, num_threads(), 0, stream>>>(N, f, data);
+//     C10_CUDA_KERNEL_LAUNCH_CHECK();
+//     break;
+//   case 2:
+//     vectorized_elementwise_kernel<2, func_t, array_t><<<grid, num_threads(), 0, stream>>>(N, f, data);
+//     C10_CUDA_KERNEL_LAUNCH_CHECK();
+//     break;
+//   case 1: {
+//     auto input_calc = TrivialOffsetCalculator<traits::arity>();
+//     auto output_calc = TrivialOffsetCalculator<1>();
+//     auto loader = memory::LoadWithoutCast();
+//     auto storer = memory::StoreWithoutCast();
+//     unrolled_elementwise_kernel<func_t, array_t><<<grid, num_threads(), 0, stream>>>(N, f, data, input_calc, output_calc, loader, storer);
+//     C10_CUDA_KERNEL_LAUNCH_CHECK();
+//     break;
+//   }
+//   default:
+//     TORCH_INTERNAL_ASSERT(false, "Unexpected vectorization size");
+//   }
+// }
+
+// template<typename func_t, typename array_t>
+// static inline void launch_vectorized_kernel(int64_t N, const func_t& f, array_t data) {
+//   CHECK_FAIL(N > 0 && N <= std::numeric_limits<int32_t>::max());
+//   using traits = function_traits<func_t>;
+//   int64_t grid = (N + block_work_size() - 1) / block_work_size();
+//   auto stream = at::cuda::getCurrentCUDAStream();
+//   int vec_size = memory::can_vectorize_up_to<func_t>(data);
+
+//   switch (vec_size) {
+//   case 4:
+//     vectorized_elementwise_kernel<4, func_t, array_t><<<grid, num_threads(), 0, stream>>>(N, f, data);
+//     C10_CUDA_KERNEL_LAUNCH_CHECK();
+//     break;
+//   case 2:
+//     vectorized_elementwise_kernel<2, func_t, array_t><<<grid, num_threads(), 0, stream>>>(N, f, data);
+//     C10_CUDA_KERNEL_LAUNCH_CHECK();
+//     break;
+//   case 1: {
+//     auto input_calc = TrivialOffsetCalculator<traits::arity>();
+//     auto output_calc = TrivialOffsetCalculator<1>();
+//     auto loader = memory::LoadWithoutCast();
+//     auto storer = memory::StoreWithoutCast();
+//     unrolled_elementwise_kernel<func_t, array_t><<<grid, num_threads(), 0, stream>>>(N, f, data, input_calc, output_calc, loader, storer);
+//     C10_CUDA_KERNEL_LAUNCH_CHECK();
+//     break;
+//   }
+//   default:
+//     TORCH_INTERNAL_ASSERT(false, "Unexpected vectorization size");
+//   }
+// }
 
 template <typename func_t>
 void gpu_kernel_impl(TensorIterator &iter, const func_t &f) {
