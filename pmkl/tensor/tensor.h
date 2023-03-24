@@ -176,6 +176,14 @@ public:
     int64_t element_size_in_bytes() const {
         return element_size(dtype_);
     }
+    void copy_from_cpu_ptr(void *ptr) {
+        auto l = GpuLauncher::GetInstance();
+        l->memcpy(data_ptr(), ptr, storage_bytes(), GpuLauncher::Direction::H2D);
+    }
+    void copy_to_cpu_ptr(void *ptr) {
+        auto l = GpuLauncher::GetInstance();
+        l->memcpy(ptr, data_ptr(), storage_bytes(), GpuLauncher::Direction::D2H);
+    }
 };
 
 Tensor empty(std::vector<int64_t> shape, ScalarType dtype, int device) {

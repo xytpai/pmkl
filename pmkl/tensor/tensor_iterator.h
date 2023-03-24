@@ -4,11 +4,15 @@
 #include <ostream>
 #include <vector>
 #include <limits>
+#include <memory>
+#include <algorithm>
 
 #include "tensor.h"
 #include "exception.h"
 
 namespace pmkl {
+
+struct SplitUntil32Bit;
 
 class TensorIterator final {
     enum {
@@ -17,6 +21,7 @@ class TensorIterator final {
 
 private:
     Tensor *tensors_[MAX_TENSORS];
+    size_t ptr_offsets_[MAX_TENSORS];
     int64_t shape_[MAX_TENSOR_DIMS];
     int64_t stride_bytes_[MAX_TENSORS][MAX_TENSOR_DIMS];
     int64_t perm_[MAX_TENSOR_DIMS];
@@ -25,6 +30,9 @@ private:
     int num_tensors_ = 0;
     int ndim_ = 0;
     bool is_reordered_ = false;
+    bool accumulate_ = false;
+    bool final_output_ = true;
+    bool is_reduction_ = false;
 
     bool check_and_compute_dim() {
         bool is_first = true;
@@ -219,11 +227,13 @@ public:
     TensorIterator() {
     }
     TensorIterator &add_output(Tensor &output) {
+        ptr_offsets_[num_tensors_] = 0;
         tensors_[num_tensors_++] = &output;
         num_outputs_++;
         return *this;
     }
     TensorIterator &add_input(Tensor &input) {
+        ptr_offsets_[num_tensors_] = 0;
         tensors_[num_tensors_++] = &input;
         num_inputs_++;
         return *this;
@@ -330,6 +340,70 @@ public:
         return has_contiguous_first_dim();
     }
 
+    /// If the kernel should accumulate into the output. Only relevant for reductions
+    bool should_accumulate() const {
+        return accumulate_;
+    }
+
+    bool is_final_output() const {
+        return final_output_;
+    }
+
+    int get_dim_to_split() const {
+        CHECK_FAIL(ndim() >= 1);
+        int64_t max_extent = -1;
+        int dim_to_split = -1;
+        for (int dim = ndim() - 1; dim >= 0; dim--) {
+            const int64_t size = shape_[dim];
+            if (size == 0) {
+                continue;
+            }
+            for (int i = 0; i < num_tensors_; ++i) {
+                // std::abs is necessary to handle some special cases where we support negative strides
+                const int64_t extent = (size - 1) * std::abs(stride_bytes_[i][dim]);
+                if (extent > max_extent) {
+                    max_extent = extent;
+                    dim_to_split = dim;
+                }
+            }
+        }
+        CHECK_FAIL(max_extent >= 0);
+        return dim_to_split;
+    }
+
+    bool is_dim_reduced(int dim) const {
+        for (int i = 0; i < num_tensors_; ++i) {
+            if ((i < num_outputs_) && stride_bytes_[i][dim] == 0 && shape_[dim] > 1) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void narrow(int dim, int64_t start, int64_t size) {
+        CHECK_FAIL(dim < ndim() && size >= 1);
+        shape_[dim] = size;
+        for (int i = 0; i < num_tensors_; ++i) {
+            ptr_offsets_[i] += stride_bytes_[i][dim] * start;
+        }
+        if (size == 1 && !is_reduction_) {
+            coalesce_dimensions();
+        }
+    }
+
+    std::unique_ptr<TensorIterator> split(int dim) {
+        CHECK_FAIL(dim >= 0 && dim < ndim() && shape()[dim] >= 2);
+        std::unique_ptr<TensorIterator> copy(new TensorIterator(*this));
+        bool overlaps = is_dim_reduced(dim);
+        auto copy_size = shape_[dim] / 2;
+        auto this_size = shape_[dim] - copy_size;
+        copy->narrow(dim, 0, copy_size);
+        copy->final_output_ &= !overlaps;
+        this->narrow(dim, copy_size, this_size);
+        this->accumulate_ |= overlaps;
+        return copy;
+    }
+
     ScalarType input_dtype(int arg = 0) const {
         return tensors_[num_outputs_ + arg]->dtype();
     }
@@ -337,12 +411,65 @@ public:
         return tensors_[arg]->dtype();
     }
     void *data_ptr(int arg) const {
-        return tensors_[arg]->data_ptr();
+        return (void *)((char *)tensors_[arg]->data_ptr() + ptr_offsets_[arg]);
     }
     int64_t element_size_in_bytes(int arg) const {
         return tensors_[arg]->element_size_in_bytes();
     }
+
+    SplitUntil32Bit with_32bit_indexing() const;
 };
+
+struct SplitUntil32Bit {
+    struct iterator {
+        iterator() {
+        }
+        iterator(const TensorIterator &iter) {
+            vec.emplace_back(new TensorIterator(iter));
+            vec.emplace_back(nullptr); // ++ first pops the last element
+            ++(*this);
+        }
+        iterator(iterator &&) = default;
+        TensorIterator &operator*() const {
+            return *vec.back();
+        }
+        iterator &operator++() {
+            vec.pop_back();
+            while (!vec.empty() && !vec.back()->can_use_32bit_indexing()) {
+                auto &iter = *vec.back();
+                int64_t split_dim = iter.get_dim_to_split();
+                vec.emplace_back(iter.split(split_dim));
+            }
+            return *this;
+        }
+        bool operator==(const iterator &other) const {
+            // two iterators are equal if they are the same object or they're both empty
+            return this == &other || (vec.empty() && other.vec.empty());
+        }
+        // needed for C++11 range-based for loop
+        bool operator!=(const iterator &other) const {
+            return !(*this == other);
+        }
+        /// stack of TensorIterators to be split
+        std::vector<std::unique_ptr<TensorIterator>> vec;
+    };
+    SplitUntil32Bit(const TensorIterator &iter) :
+        iter(iter) {
+    }
+    iterator begin() const {
+        return iterator(iter);
+    }
+    iterator end() const {
+        return iterator();
+    }
+
+private:
+    const TensorIterator &iter;
+};
+
+SplitUntil32Bit TensorIterator::with_32bit_indexing() const {
+    return SplitUntil32Bit(*this);
+}
 
 std::ostream &operator<<(std::ostream &os, const TensorIterator &iter) {
     os << "TensorIterator(\n\tshape=[";
