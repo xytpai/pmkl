@@ -270,6 +270,7 @@ public:
                     fn(info, std::forward<args_t>(args)...);
                 });
         });
+        if (is_sync_mode()) stream_sync();
     }
 };
 GpuLauncher *GpuLauncher::m_pInstance = new GpuLauncher();

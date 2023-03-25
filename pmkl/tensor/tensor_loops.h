@@ -6,6 +6,7 @@
 
 #include "function_traits.h"
 #include "tensor_iterator.h"
+#include "scalar_type.h"
 #include "tensor_offset_calculator.h"
 #include "tensor_memory_access.h"
 #include "exception.h"
@@ -110,7 +111,7 @@ static inline void launch_unrolled_kernel(int N, const func_t &f, array_t data,
 }
 
 template <typename func_t, typename array_t, typename inp_calc_t>
-static inline void launch_vectorized_kernel(int64_t N, const func_t &f, array_t data, inp_calc_t input_calc, int vec_size) {
+static inline void launch_vectorized_kernel(int N, const func_t &f, array_t data, inp_calc_t input_calc, int vec_size) {
     CHECK_FAIL(N > 0 && N <= std::numeric_limits<int32_t>::max());
     switch (vec_size) {
     case 8:
@@ -132,6 +133,77 @@ static inline void launch_vectorized_kernel(int64_t N, const func_t &f, array_t 
     }
     default:;
     }
+}
+
+template <int vec_size, typename func_t>
+static void launch_legacy_kernel(int N, const func_t &f) {
+    CHECK_FAIL(N >= 0 && N <= std::numeric_limits<int32_t>::max());
+    if (N == 0) {
+        return;
+    }
+    auto l = GpuLauncher::GetInstance();
+    int block_size = l->work_size_for_loops();
+    int block_work_size = vec_size * block_size;
+    l->submit(
+        0, {(N + block_work_size - 1) / block_work_size}, {block_size},
+        [=] DEVICE(KernelInfo & info) {
+            int tid = info.thread_idx(0);
+            int idx = block_work_size * info.block_idx(0) + tid;
+#pragma unroll
+            for (int i = 0; i < vec_size; i++) {
+                if (idx < N) {
+                    f(idx);
+                    idx += block_size;
+                }
+            }
+        });
+}
+
+template <typename traits, typename func_t, typename index_t, size_t... INDEX>
+HOST_DEVICE typename traits::result_type
+invoke_impl(const func_t &f, char *const data[], const index_t strides[], int i,
+            std::index_sequence<INDEX...>) {
+    (void)strides;
+    (void)i;
+    return f(*(typename traits::template arg<INDEX>::type *)(data[INDEX] + i * strides[INDEX])...);
+}
+
+template <typename func_t, typename index_t, typename traits = function_traits<func_t>>
+HOST_DEVICE typename traits::result_type
+invoke(const func_t &f, char *const data[], const index_t strides[], int i) {
+    using Indices = std::make_index_sequence<traits::arity>;
+    return invoke_impl<traits>(f, data, strides, i, Indices{});
+}
+
+template <typename traits, typename func_t, typename index_t, size_t... I>
+HOST_DEVICE typename traits::result_type
+invoke_impl(const func_t &f, char *const data[], const index_t strides[], const ScalarType dtypes[], int i,
+            std::index_sequence<I...>) {
+    (void)strides;
+    (void)i;
+    return f(fetch_and_cast<typename traits::template arg<I>::type>(dtypes[I], data[I] + i * strides[I])...);
+}
+
+template <typename func_t, typename index_t, typename traits = function_traits<func_t>>
+HOST_DEVICE typename traits::result_type
+invoke(const func_t &f, char *const data[], const index_t strides[], const ScalarType dtypes[], int i) {
+    using Indices = std::make_index_sequence<traits::arity>;
+    return invoke_impl<traits>(f, data, strides, dtypes, i, Indices{});
+}
+
+template <typename func_t, typename data_t>
+static inline int can_bc_vectorize_up_to(TensorIterator &iter, const data_t &data) {
+    if (!iter.has_contiguous_first_dim()) return 1;
+    int last_dim_size = iter.shape(0);
+    int vec_size = memory_access::can_vectorize_up_to<func_t>(data);
+    while (last_dim_size % vec_size) vec_size >>= 1;
+    for (int i = 0; i < iter.ntensors(); i++) {
+        auto strides = iter.strides(i);
+        for (int d = 0; d < iter.ndim(); d++) {
+            while (strides[d] % (strides[0] * vec_size)) vec_size >>= 1;
+        }
+    }
+    return vec_size;
 }
 
 template <typename func_t>
@@ -160,38 +232,44 @@ void gpu_kernel_impl(TensorIterator &iter, const func_t &f) {
             auto input_calc = TrivialOffsetCalculator<traits::arity>();
             launch_vectorized_kernel(numel, f, data, input_calc, vec_size);
         } else {
-            //     auto offset_calc = ::make_offset_calculator<traits::arity + 1>(iter);
-            //     constexpr int unroll_factor = sizeof(arg0_t) >= 4 ? 2 : 4;
-            //     launch_legacy_kernel<128, unroll_factor>(numel, [=] GPU_LAMBDA(int idx) {
-            //         auto offsets = offset_calc.get(idx);
-            //         arg0_t *out = (arg0_t *)(data[0] + offsets[0]);
-            //         *out = invoke(f, &data.data[1], &offsets.data[1], 1);
-            //     });
+            int vec_size = can_bc_vectorize_up_to<func_t>(iter, data);
+            if (vec_size > 1) {
+                auto input_calc = make_input_offset_calculator<traits::arity>(iter);
+                launch_vectorized_kernel(numel, f, data, input_calc, vec_size);
+            } else {
+                auto offset_calc = make_offset_calculator<traits::arity + 1>(iter);
+                constexpr int unroll_factor = sizeof(arg0_t) >= 4 ? 2 : 4;
+                launch_legacy_kernel<unroll_factor>(numel, [=] HOST_DEVICE(int idx) {
+                    auto offsets = offset_calc.get(idx);
+                    arg0_t *out = (arg0_t *)(data[0] + offsets[0]);
+                    *out = invoke(f, &data.val[1], &offsets.val[1], 1);
+                });
+            }
         }
     } else {
-        //     if (contiguous) {
-        //         at::detail::Array<ScalarType, traits::arity> dtypes;
-        //         for (int i = 0; i < traits::arity; i++) {
-        //             dtypes[i] = iter.dtype(i + 1);
-        //         }
-        //         auto loader = memory::LoadWithCast<traits::arity>(dtypes);
-        //         auto storer = memory::StoreWithCast(iter.dtype(0));
-        //         auto input_offset_calculator = TrivialOffsetCalculator<traits::arity>();
-        //         auto output_offset_calculator = TrivialOffsetCalculator<1>();
-        //         launch_unrolled_kernel(numel, f, data, input_offset_calculator, output_offset_calculator, loader, storer);
-        //     } else {
-        //         at::detail::Array<ScalarType, ntensors> dtypes;
-        //         for (int i = 0; i < ntensors; i++) {
-        //             dtypes[i] = iter.dtype(i);
-        //         }
-        //         auto offset_calc = ::make_offset_calculator<traits::arity + 1>(iter);
-        //         launch_legacy_kernel<128, 4>(numel, [=] GPU_LAMBDA(int idx) {
-        //             auto offsets = offset_calc.get(idx);
-        //             void *out = data[0] + offsets[0];
-        //             arg0_t result = invoke(f, &data.data[1], &offsets.data[1], &dtypes.data[1], 1);
-        //             c10::cast_and_store<arg0_t>(dtypes[0], out, result);
-        //         });
-        //     }
+        if (contiguous) {
+            memory::array<ScalarType, traits::arity> dtypes;
+            for (int i = 0; i < traits::arity; i++) {
+                dtypes[i] = iter.dtype(i + 1);
+            }
+            auto loader = memory_access::LoadWithCast<traits::arity>(dtypes);
+            auto storer = memory_access::StoreWithCast(iter.dtype(0));
+            auto input_offset_calculator = TrivialOffsetCalculator<traits::arity>();
+            auto output_offset_calculator = TrivialOffsetCalculator<1>();
+            launch_unrolled_kernel<4>(numel, f, data, input_offset_calculator, output_offset_calculator, loader, storer);
+        } else {
+            memory::array<ScalarType, ntensors> dtypes;
+            for (int i = 0; i < ntensors; i++) {
+                dtypes[i] = iter.dtype(i);
+            }
+            auto offset_calc = make_offset_calculator<traits::arity + 1>(iter);
+            launch_legacy_kernel<4>(numel, [=] HOST_DEVICE(int idx) {
+                auto offsets = offset_calc.get(idx);
+                void *out = data[0] + offsets[0];
+                arg0_t result = invoke(f, &data.val[1], &offsets.val[1], &dtypes.val[1], 1);
+                cast_and_store<arg0_t>(dtypes[0], out, result);
+            });
+        }
     }
 }
 

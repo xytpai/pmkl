@@ -309,6 +309,7 @@ public:
 
         kernel_wrapper<<<grid, block, slm_size, (cudaStream_t)stream_>>>(fn,
                                                                          std::forward<args_t>(args)...);
+        if (is_sync_mode()) stream_sync();
     }
 };
 GpuLauncher *GpuLauncher::m_pInstance = new GpuLauncher();

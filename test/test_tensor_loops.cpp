@@ -8,9 +8,10 @@ int main() {
     auto l = GpuLauncher::GetInstance();
     {
         Tensor left = empty({10}, ScalarType::Long, 0);
-        Tensor right = empty({10}, ScalarType::Long, 0);
+        Tensor right = empty({1}, ScalarType::Short, 0);
         long left_[10] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
-        long right_[10] = {9, 8, 7, 6, 5, 4, 3, 2, 1, 0};
+        // short right_[10] = {9, 8, 7, 6, 5, 4, 3, 2, 1, 1};
+        short right_[1] = {2};
         left.copy_from_cpu_ptr((void *)left_);
         right.copy_from_cpu_ptr((void *)right_);
 
