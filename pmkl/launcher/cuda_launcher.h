@@ -30,6 +30,8 @@
 #define DEVICE_INLINE __device__ __forceinline__
 #endif
 
+#define GPU_WARP_SIZE 32
+
 namespace pmkl {
 
 using namespace utils;
@@ -237,6 +239,10 @@ public:
         return sync_mode_;
     }
 
+    void set_profiling_mode(bool status) {
+        profiling_mode_ = status;
+    }
+
 private:
     GpuLauncher() {
         // Need intrinsic API
@@ -285,6 +291,7 @@ private:
     int current_device_;
     size_t stream_;
     bool sync_mode_;
+    bool profiling_mode_ = false;
 
 public:
     template <typename func_t, typename... args_t>
@@ -307,11 +314,31 @@ public:
         else if (block_size.size() == 3)
             block = dim3(block_size[0], block_size[1], block_size[2]);
 
-        kernel_wrapper<<<grid, block, slm_size, (cudaStream_t)stream_>>>(fn,
-                                                                         std::forward<args_t>(args)...);
+        if (profiling_mode_) {
+            cudaEvent_t start, stop;
+            cudaEventCreate(&start);
+            cudaEventCreate(&stop);
+            cudaEventRecord(start);
+            kernel_wrapper<<<grid, block, slm_size, (cudaStream_t)stream_>>>(fn,
+                                                                             std::forward<args_t>(args)...);
+            cudaEventRecord(stop);
+            cudaEventSynchronize(stop);
+            float milliseconds = 0;
+            cudaEventElapsedTime(&milliseconds, start, stop);
+            std::cout << milliseconds << " ms" << std::endl;
+        } else {
+            kernel_wrapper<<<grid, block, slm_size, (cudaStream_t)stream_>>>(fn,
+                                                                             std::forward<args_t>(args)...);
+        }
+
         if (is_sync_mode()) stream_sync();
     }
 };
 GpuLauncher *GpuLauncher::m_pInstance = new GpuLauncher();
+
+template <typename T>
+DEVICE_INLINE T GPU_SHFL_XOR(T value, int laneMask, int width = warpSize, unsigned int mask = 0xffffffff) {
+    return __shfl_xor_sync(mask, value, laneMask, width);
+}
 
 }; // namespace pmkl

@@ -30,6 +30,8 @@
 #define DEVICE_INLINE inline
 #endif
 
+#define GPU_WARP_SIZE 32
+
 namespace pmkl {
 
 using namespace utils;
@@ -167,6 +169,10 @@ public:
         return sync_mode_;
     }
 
+    void set_profiling_mode(bool status) {
+        profiling_mode_ = status;
+    }
+
 private:
     GpuLauncher() {
         // Need intrinsic API
@@ -224,6 +230,7 @@ private:
     int current_device_;
     std::vector<sycl::queue> queues_;
     bool sync_mode_;
+    bool profiling_mode_ = false;
 
 public:
     template <typename func_t, typename... args_t>
@@ -265,7 +272,7 @@ public:
             h.parallel_for(
                 sycl::nd_range<3>(sycl::range<3>(groups[0], groups[1], groups[2]),
                                   sycl::range<3>(group_items[0], group_items[1], group_items[2])),
-                [=](sycl::nd_item<3> item) [[intel::reqd_sub_group_size(32)]] {
+                [=](sycl::nd_item<3> item) [[intel::reqd_sub_group_size(GPU_WARP_SIZE)]] {
                     auto info = KernelInfo(item, slm);
                     fn(info, std::forward<args_t>(args)...);
                 });
@@ -274,5 +281,11 @@ public:
     }
 };
 GpuLauncher *GpuLauncher::m_pInstance = new GpuLauncher();
+
+template <typename T>
+DEVICE_INLINE T GPU_SHFL_XOR(T value, int laneMask, int width = warpSize, unsigned int mask = 0xffffffff) {
+    std::cout << "GPU_SHFL_XOR NOT IMPLEMENTED ERROR\n";
+    return value; // NOT IMPLEMENTED ERROR;
+}
 
 }; // namespace pmkl
