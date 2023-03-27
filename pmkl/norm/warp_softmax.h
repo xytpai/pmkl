@@ -29,17 +29,47 @@ inline int log2_ceil(int value) {
     return log2_value;
 }
 
+// template <typename acc_t, int WARP_BATCH, int WARP_SIZE, template <typename> class ReduceOp>
+// DEVICE_INLINE void warp_reduce(acc_t *sum) {
+//     ReduceOp<acc_t> r;
+// #pragma unroll
+//     for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
+// #pragma unroll
+//         for (int i = 0; i < WARP_BATCH; ++i) {
+//             acc_t b = GPU_SHFL_XOR(sum[i], offset, WARP_SIZE);
+//             sum[i] = r(sum[i], b);
+//         }
+//     }
+// }
+
 template <typename acc_t, int WARP_BATCH, int WARP_SIZE, template <typename> class ReduceOp>
 DEVICE_INLINE void warp_reduce(acc_t *sum) {
     ReduceOp<acc_t> r;
+    int warp_local_idx = threadIdx.x;
+    int warp_idx = threadIdx.y;
 #pragma unroll
     for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
 #pragma unroll
         for (int i = 0; i < WARP_BATCH; ++i) {
-            acc_t b = GPU_SHFL_XOR(sum[i], offset, WARP_SIZE);
+            acc_t b = GPU_SHFL_DOWN(sum[i], offset, WARP_SIZE);
             sum[i] = r(sum[i], b);
         }
     }
+    __shared__ acc_t datax[4 * WARP_BATCH];
+    if (warp_local_idx == 0) {
+#pragma unroll
+        for (int i = 0; i < WARP_BATCH; ++i) {
+            datax[warp_idx * WARP_BATCH + i] = sum[i];
+        }
+    }
+    __syncthreads();
+    if (warp_local_idx != 0) {
+#pragma unroll
+        for (int i = 0; i < WARP_BATCH; ++i) {
+            sum[i] = datax[warp_idx * WARP_BATCH + i];
+        }
+    }
+    __syncthreads();
 }
 
 template <typename output_t, typename input_t, typename acc_t, int log2_elements, bool is_log_softmax, typename info_t>
@@ -145,13 +175,13 @@ void warp_softmax_forward(
         int warps_per_block = (threads_per_block / warp_size);
         int batches_per_block = warps_per_block * batches_per_warp;
         auto l = GpuLauncher::GetInstance();
-#define LAUNCH_WARP_SOFTMAX_FORWARD(L2E)                                                                                                                                                         \
-    case L2E:                                                                                                                                                                                    \
-        l->submit(                                                                                                                                                                               \
-            0,                                                                                                                                                                                   \
-            {(batch_count + batches_per_block - 1) / batches_per_block}, {warp_size, warps_per_block, 1},                                                                                        \
-            [=] DEVICE(KernelInfo &info) { warp_softmax_forward_impl<output_t, input_t, acc_t, L2E, is_log_softmax>(                                                                             \
-                                               info, dst, src, batch_count, softmax_elements_stride, softmax_elements); }); \
+#define LAUNCH_WARP_SOFTMAX_FORWARD(L2E)                                                                                                                                                          \
+    case L2E:                                                                                                                                                                                     \
+        l->submit(                                                                                                                                                                                \
+            4 * batches_per_warp,                                                                                                                                                                 \
+            {(batch_count + batches_per_block - 1) / batches_per_block}, {warp_size, warps_per_block, 1},                                                                                         \
+            [=] DEVICE(KernelInfo & info) { warp_softmax_forward_impl<output_t, input_t, acc_t, L2E, is_log_softmax>(                                                                             \
+                                                info, dst, src, batch_count, softmax_elements_stride, softmax_elements); }); \
         break;
         switch (log2_elements) {
             LAUNCH_WARP_SOFTMAX_FORWARD(0);  // 1
@@ -170,6 +200,5 @@ void warp_softmax_forward(
 #undef LAUNCH_WARP_SOFTMAX_FORWARD
     }
 }
-
 }
 } // namespace pmkl::norm

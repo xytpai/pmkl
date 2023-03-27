@@ -283,9 +283,21 @@ public:
 GpuLauncher *GpuLauncher::m_pInstance = new GpuLauncher();
 
 template <typename T>
+DEVICE_INLINE T GPU_SHFL_UP(T value, unsigned int delta, int width = warpSize, unsigned int mask = 0xffffffff) {
+    std::cout << "NOT IMPLEMENTED ERROR\n";
+    return value;
+}
+
+template <typename T>
+DEVICE_INLINE T GPU_SHFL_DOWN(T value, unsigned int delta, int width = warpSize, unsigned int mask = 0xffffffff) {
+    std::cout << "NOT IMPLEMENTED ERROR\n";
+    return value;
+}
+
+template <typename T>
 DEVICE_INLINE T GPU_SHFL_XOR(T value, int laneMask, int width = warpSize, unsigned int mask = 0xffffffff) {
-    std::cout << "GPU_SHFL_XOR NOT IMPLEMENTED ERROR\n";
-    return value; // NOT IMPLEMENTED ERROR;
+    std::cout << "NOT IMPLEMENTED ERROR\n";
+    return value;
 }
 
 }; // namespace pmkl
