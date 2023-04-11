@@ -337,17 +337,17 @@ public:
 GpuLauncher *GpuLauncher::m_pInstance = new GpuLauncher();
 
 template <typename T>
-DEVICE_INLINE T GPU_SHFL_UP(T value, unsigned int delta, int width = warpSize, unsigned int mask = 0xffffffff) {
+DEVICE_INLINE T GPU_SHFL_UP(T value, unsigned int delta, int width = GPU_WARP_SIZE, unsigned int mask = 0xffffffff) {
     return __shfl_up_sync(mask, value, delta, width);
 }
 
 template <typename T>
-DEVICE_INLINE T GPU_SHFL_DOWN(T value, unsigned int delta, int width = warpSize, unsigned int mask = 0xffffffff) {
+DEVICE_INLINE T GPU_SHFL_DOWN(T value, unsigned int delta, int width = GPU_WARP_SIZE, unsigned int mask = 0xffffffff) {
     return __shfl_down_sync(mask, value, delta, width);
 }
 
 template <typename T>
-DEVICE_INLINE T GPU_SHFL_XOR(T value, int laneMask, int width = warpSize, unsigned int mask = 0xffffffff) {
+DEVICE_INLINE T GPU_SHFL_XOR(T value, int laneMask, int width = GPU_WARP_SIZE, unsigned int mask = 0xffffffff) {
     return __shfl_xor_sync(mask, value, laneMask, width);
 }
 

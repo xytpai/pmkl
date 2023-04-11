@@ -174,6 +174,15 @@ public:
     }
 
 private:
+    double get_timems(cl::sycl::event &event) {
+        auto submit_time = event.get_profiling_info<cl::sycl::info::event_profiling::command_submit>();
+        auto start_time = event.get_profiling_info<cl::sycl::info::event_profiling::command_start>();
+        auto end_time = event.get_profiling_info<cl::sycl::info::event_profiling::command_end>();
+        auto submission_time = (start_time - submit_time) / 1000000.0f;
+        auto execution_time = (end_time - start_time) / 1000000.0f;
+        return execution_time;
+    }
+
     GpuLauncher() {
         // Need intrinsic API
         srand((unsigned)time(0));
@@ -185,7 +194,7 @@ private:
             auto device_list = p.get_devices();
             for (const auto &device : device_list) {
                 if (device.is_gpu()) {
-                    queues_.push_back(sycl::queue(device, sycl::property_list{sycl::property::queue::in_order{}}));
+                    queues_.push_back(sycl::queue(device, sycl::property_list{sycl::property::queue::in_order{}, cl::sycl::property::queue::enable_profiling()}));
                     list_devices.push_back(device);
                 }
             }
@@ -277,25 +286,28 @@ public:
                     fn(info, std::forward<args_t>(args)...);
                 });
         });
+        if (profiling_mode_) {
+            std::cout << get_timems(event) << " ms" << std::endl;
+        }
         if (is_sync_mode()) stream_sync();
     }
 };
 GpuLauncher *GpuLauncher::m_pInstance = new GpuLauncher();
 
 template <typename T>
-DEVICE_INLINE T GPU_SHFL_UP(T value, unsigned int delta, int width = warpSize, unsigned int mask = 0xffffffff) {
+DEVICE_INLINE T GPU_SHFL_UP(T value, unsigned int delta, int width = GPU_WARP_SIZE, unsigned int mask = 0xffffffff) {
     std::cout << "NOT IMPLEMENTED ERROR\n";
     return value;
 }
 
 template <typename T>
-DEVICE_INLINE T GPU_SHFL_DOWN(T value, unsigned int delta, int width = warpSize, unsigned int mask = 0xffffffff) {
+DEVICE_INLINE T GPU_SHFL_DOWN(T value, unsigned int delta, int width = GPU_WARP_SIZE, unsigned int mask = 0xffffffff) {
     std::cout << "NOT IMPLEMENTED ERROR\n";
     return value;
 }
 
 template <typename T>
-DEVICE_INLINE T GPU_SHFL_XOR(T value, int laneMask, int width = warpSize, unsigned int mask = 0xffffffff) {
+DEVICE_INLINE T GPU_SHFL_XOR(T value, int laneMask, int width = GPU_WARP_SIZE, unsigned int mask = 0xffffffff) {
     std::cout << "NOT IMPLEMENTED ERROR\n";
     return value;
 }
