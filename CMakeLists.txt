@@ -3,12 +3,9 @@ project(pmkl)
 set(ROOTDIR ${PROJECT_SOURCE_DIR})
 
 include_directories(${ROOTDIR}/pmkl)
-include_directories(${ROOTDIR}/pmkl/launcher)
-include_directories(${ROOTDIR}/pmkl/memory)
+include_directories(${ROOTDIR}/pmkl/core)
 include_directories(${ROOTDIR}/pmkl/norm)
 include_directories(${ROOTDIR}/pmkl/sorting)
-include_directories(${ROOTDIR}/pmkl/tensor)
-include_directories(${ROOTDIR}/pmkl/utils)
 include_directories(${ROOTDIR}/pmkl/image/nms)
 
 
