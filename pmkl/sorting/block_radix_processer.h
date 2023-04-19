@@ -55,7 +55,7 @@ private:
     int lid_;
 
 public:
-    static int GetSharedLocalMemorySize() {
+    static HOST_DEVICE int GetSharedLocalMemorySize() {
         return sizeof(LocalStorage);
     }
 
