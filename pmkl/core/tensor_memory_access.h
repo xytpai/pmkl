@@ -14,7 +14,7 @@ namespace memory_access {
 template <template <int i> typename func, int end, int current = 0>
 struct static_unroll {
     template <typename... Args>
-    static HOST_DEVICE_INLINE void with_args(Args &&... args) {
+    static HOST_DEVICE_INLINE void with_args(Args &&...args) {
         func<current>::apply(std::forward<Args>(args)...);
         static_unroll<func, end, current + 1>::with_args(args...);
     }

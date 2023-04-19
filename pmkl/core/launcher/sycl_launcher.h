@@ -247,7 +247,7 @@ public:
         size_t slm_size,
         std::vector<int> grid_size,
         std::vector<int> block_size,
-        func_t fn, args_t &&... args) {
+        func_t fn, args_t &&...args) {
         std::array<int, 3> groups, group_items;
         if (block_size.size() == 1) {
             group_items[0] = 1;

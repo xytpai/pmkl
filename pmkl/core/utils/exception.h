@@ -114,7 +114,7 @@ void check_fail_(
 }
 
 template <typename... Args>
-decltype(auto) msg_impl(const char *, const Args &... args) {
+decltype(auto) msg_impl(const char *, const Args &...args) {
     return str(args...);
 }
 

@@ -101,7 +101,7 @@ struct KernelInfo {
 };
 
 template <typename func_t, typename... args_t>
-__global__ void kernel_wrapper(func_t fn, args_t &&... args) {
+__global__ void kernel_wrapper(func_t fn, args_t &&...args) {
     extern __shared__ char smem[];
     auto info = KernelInfo(smem);
     fn(info, std::forward<args_t>(args)...);
@@ -299,7 +299,7 @@ public:
         size_t slm_size,
         std::vector<int> grid_size,
         std::vector<int> block_size,
-        func_t fn, args_t &&... args) {
+        func_t fn, args_t &&...args) {
         dim3 grid, block;
         if (grid_size.size() == 1)
             grid = dim3(grid_size[0]);

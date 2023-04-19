@@ -118,7 +118,7 @@ private:
                 int64_t stride0 = tensors_[arg]->stride(dim0);
                 int64_t stride1 = tensors_[arg]->stride(dim1);
                 if (stride0 == 0 || stride1 == 0) {
-                    //move on to the next input if one of the dimensions is broadcasted
+                    // move on to the next input if one of the dimensions is broadcasted
                     continue;
                 } else if (stride0 < stride1) {
                     return -1;
@@ -128,7 +128,7 @@ private:
                     // for equal strides, the dimension with smaller size goes front
                     auto t_dim0 = shape_[dim0];
                     auto t_dim1 = shape_[dim1];
-                    //return only if dimensions should be swapped, otherwise move on to the next tensor
+                    // return only if dimensions should be swapped, otherwise move on to the next tensor
                     if (t_dim0 > t_dim1) {
                         return 1;
                     }

@@ -18,13 +18,13 @@ inline std::ostream &_str(std::ostream &ss, const T &t) {
 }
 
 template <typename T, typename... Args>
-inline std::ostream &_str(std::ostream &ss, const T &t, const Args &... args) {
+inline std::ostream &_str(std::ostream &ss, const T &t, const Args &...args) {
     return _str(_str(ss, t), args...);
 }
 
 template <typename... Args>
 struct _str_wrapper final {
-    static std::string call(const Args &... args) {
+    static std::string call(const Args &...args) {
         std::ostringstream ss;
         _str(ss, args...);
         return ss.str();
@@ -46,7 +46,7 @@ struct _str_wrapper<const char *> final {
 };
 
 template <typename... Args>
-inline decltype(auto) str(const Args &... args) {
+inline decltype(auto) str(const Args &...args) {
     return _str_wrapper<Args...>::call(args...);
 }
 

@@ -2,6 +2,4 @@
 
 #include "core.h"
 
-namespace pmkl {
-
-} // namespace pmkl
+#include "binary_addsub.h"
