@@ -4,7 +4,7 @@
 
 #include "sorting_common.h"
 #include "block_radix_processer.h"
-#include "exception.h"
+#include "core.h"
 
 using namespace pmkl::utils;
 

@@ -3,8 +3,7 @@
 #include <limits>
 #include <algorithm>
 
-#include "launcher.h"
-#include "exception.h"
+#include "core.h"
 
 namespace pmkl {
 namespace norm {
