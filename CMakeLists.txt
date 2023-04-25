@@ -10,6 +10,7 @@ include_directories(${ROOTDIR}/pmkl/core/memory)
 include_directories(${ROOTDIR}/pmkl/core/utils)
 
 include_directories(${ROOTDIR}/pmkl/eltwise)
+include_directories(${ROOTDIR}/pmkl/nlp)
 include_directories(${ROOTDIR}/pmkl/norm)
 include_directories(${ROOTDIR}/pmkl/sorting)
 include_directories(${ROOTDIR}/pmkl/image/nms)
