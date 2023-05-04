@@ -8,10 +8,10 @@
 namespace pmkl {
 namespace nlp {
 
-#define FMHA_FOR_LOOP_SYNC(IDX, N, FN)                                              \
-    {                                                                               \
-        for (int IDX = info.thread_idx(0); IDX < N; IDX += info.block_range(0)) FN; \
-        info.barrier();                                                             \
+#define FMHA_FOR_LOOP_SYNC(IDX, N, FN)                                               \
+    {                                                                                \
+        for (int IDX = info.thread_idx(0); IDX < N; IDX += info.thread_range(0)) FN; \
+        info.barrier();                                                              \
     }
 
 namespace block {
@@ -21,6 +21,15 @@ DEVICE_INLINE void warp_reduce_sum(scalar_t *item, int wid, int warp_tid, scalar
 #pragma unroll
     for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
         *item = *item + GPU_SHFL_DOWN(*item, offset, WARP_SIZE);
+    }
+    if (warp_tid == 0) out[wid] = *item;
+}
+
+template <typename scalar_t, int WARP_SIZE>
+DEVICE_INLINE void warp_reduce_max(scalar_t *item, int wid, int warp_tid, scalar_t *out) {
+#pragma unroll
+    for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
+        *item = std::max(*item, GPU_SHFL_DOWN(*item, offset, WARP_SIZE));
     }
     if (warp_tid == 0) out[wid] = *item;
 }
@@ -80,15 +89,6 @@ DEVICE_INLINE void fmha_dot_acc(info_t &info, scalar_t *out, const scalar_t *a, 
             info.barrier();
         }
     }
-}
-
-template <typename scalar_t, int WARP_SIZE>
-DEVICE_INLINE void warp_reduce_max(scalar_t *item, int wid, int warp_tid, scalar_t *out) {
-#pragma unroll
-    for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
-        *item = std::max(*item, GPU_SHFL_DOWN(*item, offset, WARP_SIZE));
-    }
-    if (warp_tid == 0) out[wid] = *item;
 }
 
 template <typename scalar_t, int SEQ_N, int NUM_THREADS, int WARP_SIZE, typename info_t>
@@ -173,15 +173,13 @@ DEVICE void causal_attention_forward_kernel(
     auto o_ms = out_m + offset_b + info.block_idx(1) * BLOCK_M;
     auto o_ls = out_l + offset_b + info.block_idx(1) * BLOCK_M;
 
-    int tid = info.thread_idx(0);
-    m_prev[tid] = -std::numeric_limits<float>::infinity();
-    l_prev[tid] = 0;
-
-    FMHA_FOR_LOOP_SYNC(i, BSIZE, {
-        acc[i] = 0;
+    FMHA_FOR_LOOP_SYNC(i, BLOCK_M, {
+        m_prev[i] = -1e20;
+        l_prev[i] = 0;
     });
 
     FMHA_FOR_LOOP_SYNC(i, BSIZE, {
+        acc[i] = 0;
         q_temp[i] = q_bs[i];
     });
 
@@ -196,7 +194,7 @@ DEVICE void causal_attention_forward_kernel(
         FMHA_FOR_LOOP_SYNC(i, BLOCK_M * BLOCK_M, {
             int row = info.block_idx(1) * BLOCK_M + i / BLOCK_M;
             int col = start_s + i % BLOCK_M;
-            qk_temp[i] = col >= row ? qk_temp[i] : -std::numeric_limits<float>::infinity();
+            qk_temp[i] = col >= row ? qk_temp[i] : -1e20;
         });
 
         block::fmha_max<scalar_t, BLOCK_M, BLOCK_THREADS, WARP_SIZE>(
@@ -267,7 +265,7 @@ void causal_attention_forward(
     constexpr int NUM_WARPS = BLOCK_THREADS / WARP_SIZE;
 
     CHECK_FAIL(seq_length % BLOCK_M == 0);
-    CHECK_FAIL(BLOCK_M == WARP_SIZE);
+    CHECK_FAIL(BLOCK_M == WARP_SIZE); // TODO: for experimental
 
     if (batch_size * num_heads * seq_length == 0) return;
 
@@ -281,7 +279,7 @@ void causal_attention_forward(
     CHECK_FAIL(slm_size <= l->shared_local_memory_size());
     l->submit(
         slm_size,
-        {batch_size * num_heads, (seq_length + BLOCK_M - 1) / BLOCK_M},
+        {batch_size * num_heads, seq_length / BLOCK_M},
         {BLOCK_THREADS},
         [=] DEVICE(KernelInfo & info) {
             causal_attention_forward_kernel<scalar_t, BLOCK_M, HIDDEN_SIZE, BLOCK_THREADS, WARP_SIZE>(
