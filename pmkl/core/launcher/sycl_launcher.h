@@ -70,6 +70,9 @@ struct KernelInfo {
     DEVICE_INLINE char *shared_ptr() {
         return smem_;
     };
+    DEVICE_INLINE sycl::sub_group get_sub_group() {
+        return item_.get_sub_group();
+    }
 };
 
 class GpuLauncher {
@@ -294,20 +297,18 @@ public:
 };
 GpuLauncher *GpuLauncher::m_pInstance = new GpuLauncher();
 
-template <typename T>
-DEVICE_INLINE T GPU_SHFL_UP(T value, unsigned int delta, int width = GPU_WARP_SIZE, unsigned int mask = 0xffffffff) {
-    std::cout << "NOT IMPLEMENTED ERROR\n";
-    return value;
+template <typename T, typename info_t>
+DEVICE_INLINE T GPU_SHFL_UP(info_t &info, T value, unsigned int delta, int width = GPU_WARP_SIZE, unsigned int mask = 0xffffffff) {
+    return info.get_sub_group().shuffle_up(value, delta);
 }
 
-template <typename T>
-DEVICE_INLINE T GPU_SHFL_DOWN(T value, unsigned int delta, int width = GPU_WARP_SIZE, unsigned int mask = 0xffffffff) {
-    std::cout << "NOT IMPLEMENTED ERROR\n";
-    return value;
+template <typename T, typename info_t>
+DEVICE_INLINE T GPU_SHFL_DOWN(info_t &info, T value, unsigned int delta, int width = GPU_WARP_SIZE, unsigned int mask = 0xffffffff) {
+    return info.get_sub_group().shuffle_down(value, delta);
 }
 
-template <typename T>
-DEVICE_INLINE T GPU_SHFL_XOR(T value, int laneMask, int width = GPU_WARP_SIZE, unsigned int mask = 0xffffffff) {
+template <typename T, typename info_t>
+DEVICE_INLINE T GPU_SHFL_XOR(info_t &info, T value, int laneMask, int width = GPU_WARP_SIZE, unsigned int mask = 0xffffffff) {
     std::cout << "NOT IMPLEMENTED ERROR\n";
     return value;
 }

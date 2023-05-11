@@ -16,20 +16,20 @@ namespace nlp {
 
 namespace block {
 
-template <typename scalar_t, int WARP_SIZE>
-DEVICE_INLINE void warp_reduce_sum(scalar_t *item, int wid, int warp_tid, scalar_t *out) {
+template <typename scalar_t, int WARP_SIZE, typename info_t>
+DEVICE_INLINE void warp_reduce_sum(info_t &info, scalar_t *item, int wid, int warp_tid, scalar_t *out) {
 #pragma unroll
     for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
-        *item = *item + GPU_SHFL_DOWN(*item, offset, WARP_SIZE);
+        *item = *item + GPU_SHFL_DOWN(info, *item, offset, WARP_SIZE);
     }
     if (warp_tid == 0) out[wid] = *item;
 }
 
-template <typename scalar_t, int WARP_SIZE>
-DEVICE_INLINE void warp_reduce_max(scalar_t *item, int wid, int warp_tid, scalar_t *out) {
+template <typename scalar_t, int WARP_SIZE, typename info_t>
+DEVICE_INLINE void warp_reduce_max(info_t &info, scalar_t *item, int wid, int warp_tid, scalar_t *out) {
 #pragma unroll
     for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
-        *item = std::max(*item, GPU_SHFL_DOWN(*item, offset, WARP_SIZE));
+        *item = std::max(*item, GPU_SHFL_DOWN(info, *item, offset, WARP_SIZE));
     }
     if (warp_tid == 0) out[wid] = *item;
 }
@@ -52,7 +52,7 @@ DEVICE_INLINE void fmha_dot(info_t &info, scalar_t *out, const scalar_t *a, cons
             auto a_offset = m * C + wid_c * WARP_SIZE + warp_tid;
             auto b_offset = (n + wid_s) * C + wid_c * WARP_SIZE + warp_tid;
             scalar_t sum = a[a_offset] * b[b_offset];
-            warp_reduce_sum<scalar_t, WARP_SIZE>(&sum, wid, warp_tid, temp);
+            warp_reduce_sum<scalar_t, WARP_SIZE>(info, &sum, wid, warp_tid, temp);
             info.barrier();
             if (wid_c == 0 && warp_tid == 0) {
                 scalar_t wsum = 0;
@@ -80,7 +80,7 @@ DEVICE_INLINE void fmha_dot_acc(info_t &info, scalar_t *out, const scalar_t *a, 
             auto a_offset = m * SEQ_N + warp_tid;
             auto b_offset = warp_tid * C + n + wid;
             scalar_t sum = a[a_offset] * b[b_offset];
-            warp_reduce_sum<scalar_t, WARP_SIZE>(&sum, wid, warp_tid, temp);
+            warp_reduce_sum<scalar_t, WARP_SIZE>(info, &sum, wid, warp_tid, temp);
             info.barrier();
             if (warp_tid == 0) {
                 scalar_t wsum = 0;
@@ -102,7 +102,7 @@ DEVICE_INLINE void fmha_max(info_t &info, scalar_t *out, const scalar_t *curr_ma
     for (int m = 0; m < SEQ_N; m++) {
         scalar_t item = tid < SEQ_N ? curr_mat[m * SEQ_N + tid] : neg_inf;
         info.barrier();
-        warp_reduce_max<scalar_t, WARP_SIZE>(&item, wid, warp_tid, temp);
+        warp_reduce_max<scalar_t, WARP_SIZE>(info, &item, wid, warp_tid, temp);
         info.barrier();
         if (tid == 0) {
             scalar_t wmax = neg_inf;
@@ -126,7 +126,7 @@ DEVICE_INLINE void fmha_sum(info_t &info, scalar_t *out, const scalar_t *curr_ma
     for (int m = 0; m < SEQ_N; m++) {
         scalar_t item = tid < SEQ_N ? curr_mat[m * SEQ_N + tid] : 0;
         info.barrier();
-        warp_reduce_sum<scalar_t, WARP_SIZE>(&item, wid, warp_tid, temp);
+        warp_reduce_sum<scalar_t, WARP_SIZE>(info, &item, wid, warp_tid, temp);
         info.barrier();
         if (tid == 0) {
             scalar_t wsum = 0;

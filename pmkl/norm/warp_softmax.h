@@ -41,8 +41,8 @@ inline int log2_ceil(int value) {
 //     }
 // }
 
-template <typename acc_t, int WARP_BATCH, int WARP_SIZE, template <typename> class ReduceOp>
-DEVICE_INLINE void warp_reduce(acc_t *sum) {
+template <typename acc_t, int WARP_BATCH, int WARP_SIZE, template <typename> class ReduceOp, typename info_t>
+DEVICE_INLINE void warp_reduce(info_t &info, acc_t *sum) {
     ReduceOp<acc_t> r;
     int warp_local_idx = threadIdx.x;
     int warp_idx = threadIdx.y;
@@ -50,7 +50,7 @@ DEVICE_INLINE void warp_reduce(acc_t *sum) {
     for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
 #pragma unroll
         for (int i = 0; i < WARP_BATCH; ++i) {
-            acc_t b = GPU_SHFL_DOWN(sum[i], offset, WARP_SIZE);
+            acc_t b = GPU_SHFL_DOWN(info, sum[i], offset, WARP_SIZE);
             sum[i] = r(sum[i], b);
         }
     }
@@ -115,7 +115,7 @@ DEVICE void warp_softmax_forward_impl(info_t &info, output_t *dst, const input_t
             max_value[i] = max_value[i] > elements[i][it] ? max_value[i] : elements[i][it];
         }
     }
-    warp_reduce<acc_t, WARP_BATCH, WARP_SIZE, Max>(max_value);
+    warp_reduce<acc_t, WARP_BATCH, WARP_SIZE, Max>(info, max_value);
 
     acc_t sum[WARP_BATCH]{0.0f};
 #pragma unroll
@@ -130,7 +130,7 @@ DEVICE void warp_softmax_forward_impl(info_t &info, output_t *dst, const input_t
             }
         }
     }
-    warp_reduce<acc_t, WARP_BATCH, WARP_SIZE, Add>(sum);
+    warp_reduce<acc_t, WARP_BATCH, WARP_SIZE, Add>(info, sum);
 
     // store result
 #pragma unroll
