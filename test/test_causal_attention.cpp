@@ -10,11 +10,11 @@ using namespace pmkl;
 
 template <typename scalar_t>
 void host_self_attention_forward(
-    scalar_t *o, scalar_t *q, scalar_t *k, scalar_t *v,
+    scalar_t *o, const scalar_t *q, const scalar_t *k, const scalar_t *v,
     int batch_size, int nheads, int seq_length, int hidden_size,
     bool is_causal,
-    scalar_t *m,
-    scalar_t *l) {
+    scalar_t *out_m,
+    scalar_t *out_l) {
     constexpr scalar_t neg_inf = -1e20;
     batch_size = batch_size * nheads;
     for (int b = 0; b < batch_size; b++) {
@@ -23,8 +23,8 @@ void host_self_attention_forward(
         auto q_b = q + offset_b;
         auto k_b = k + offset_b;
         auto v_b = v + offset_b;
-        auto m_b = m + b * seq_length;
-        auto l_b = l + b * seq_length;
+        auto out_m_b = out_m + b * seq_length;
+        auto out_l_b = out_l + b * seq_length;
         auto seq2 = new scalar_t[seq_length * seq_length];
         for (int m = 0; m < seq_length; m++) {
             for (int n = 0; n < seq_length; n++) {
@@ -46,12 +46,12 @@ void host_self_attention_forward(
             for (int n = 0; n < seq_length; n++) {
                 max_value = std::max(seq2[m * seq_length + n], max_value);
             }
-            m_b[m] = max_value;
+            out_m_b[m] = max_value;
             double e2sum = 0;
             for (int n = 0; n < seq_length; n++) {
                 e2sum += std::exp((double)seq2[m * seq_length + n] - max_value);
             }
-            l_b[m] = e2sum;
+            out_l_b[m] = e2sum;
             for (int n = 0; n < seq_length; n++) {
                 seq2[m * seq_length + n] = std::exp(seq2[m * seq_length + n] - max_value) / e2sum;
             }
@@ -69,10 +69,46 @@ void host_self_attention_forward(
     }
 }
 
+template <typename scalar_t>
+void host_self_attention_backward(
+    scalar_t *dq, scalar_t *dk, scalar_t *dv,
+    const scalar_t *dout, const scalar_t *o,
+    const scalar_t *q, const scalar_t *k, const scalar_t *v,
+    const scalar_t *out_m, const scalar_t *out_l,
+    int batch_size, int nheads, int seq_length, int hidden_size,
+    bool is_causal) {
+    constexpr scalar_t neg_inf = -1e20;
+    batch_size = batch_size * nheads;
+    for (int b = 0; b < batch_size; b++) {
+        size_t offset_b = b * seq_length * hidden_size;
+        auto dq_b = dq + offset_b;
+        auto dk_b = dk + offset_b;
+        auto dv_b = dv + offset_b;
+        auto dout_b = dout + offset_b;
+        auto o_b = o + offset_b;
+        auto q_b = q + offset_b;
+        auto k_b = k + offset_b;
+        auto v_b = v + offset_b;
+        auto out_m_b = out_m + b * seq_length;
+        auto out_l_b = out_l + b * seq_length;
+        for (int m = 0; m < seq_length; m++) {     // k, v
+            for (int n = 0; n < seq_length; n++) { // q, o, do
+                scalar_t qk = 0;
+                for (int kk = 0; kk < hidden_size; kk++) {
+                    qk += q_b[n * hidden_size + kk] * k_b[m * hidden_size + kk];
+                }
+                if (is_causal) qk = m >= n ? qk : neg_inf;
+                qk = std::exp(qk - out_m_b[m]) / out_l_b[m];
+            }
+        }
+    }
+}
+
 int main() {
     auto l = GpuLauncher::GetInstance();
+    l->set_profiling_mode(true);
     std::vector<std::vector<int64_t>> shapes = {
-        {2, 4, 256, 64},
+        {4, 16, 1024, 64},
     };
     for (auto shape : shapes) {
         Tensor q = empty(shape, ScalarType::Float, 0);
