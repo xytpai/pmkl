@@ -3,5 +3,5 @@ dist
 *.egg-info
 .vscode
 tmp
-test_*/
-test_*
+test_cu
+*.tmp

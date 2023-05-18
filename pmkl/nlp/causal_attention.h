@@ -194,7 +194,7 @@ DEVICE void causal_attention_forward_kernel(
         FMHA_FOR_LOOP_SYNC(i, BLOCK_M * BLOCK_M, {
             int row = info.block_idx(1) * BLOCK_M + i / BLOCK_M;
             int col = start_s + i % BLOCK_M;
-            qk_temp[i] = col >= row ? qk_temp[i] : -1e20;
+            qk_temp[i] = row >= col ? qk_temp[i] : -1e20;
         });
 
         block::fmha_max<scalar_t, BLOCK_M, BLOCK_THREADS, WARP_SIZE>(

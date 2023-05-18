@@ -1,12 +1,6 @@
-#include "pmkl.h"
+#include <torch/extension.h>
 
-#include <iostream>
-#include <vector>
-#include <limits>
-#include <algorithm>
-
-using namespace std;
-using namespace pmkl;
+namespace pmkl_cpu {
 
 template <typename scalar_t>
 void host_self_attention_forward(
@@ -140,68 +134,87 @@ void host_self_attention_backward(
     }
 }
 
-int main() {
-    auto l = GpuLauncher::GetInstance();
-    l->set_profiling_mode(true);
-    std::vector<std::vector<int64_t>> shapes = {
-        {4, 16, 1024, 64},
-    };
-    for (auto shape : shapes) {
-        Tensor q = empty(shape, ScalarType::Float, 0);
-        Tensor k = empty(shape, ScalarType::Float, 0);
-        Tensor v = empty(shape, ScalarType::Float, 0);
-        Tensor o = empty(shape, ScalarType::Float, 0);
-        auto s012 = shape[0] * shape[1] * shape[2];
-        Tensor ms = empty({s012}, ScalarType::Float, 0);
-        Tensor ls = empty({s012}, ScalarType::Float, 0);
-        auto numel = q.numel();
-        std::cout << numel << std::endl;
+} // namespace pmkl_cpu
 
-        auto q_data = new float[numel];
-        auto k_data = new float[numel];
-        auto v_data = new float[numel];
+std::tuple<at::Tensor, at::Tensor, at::Tensor> fused_self_attention_fw(const at::Tensor &q, const at::Tensor &k, const at::Tensor &v, bool is_causal) {
+    TORCH_CHECK(q.dim() == 4 && k.dim() == 4 && v.dim() == 4, "Input tensor shapes must match");
+    TORCH_CHECK(q.sizes() == k.sizes() && q.sizes() == v.sizes(), "Input tensor shapes must match");
 
-        auto o_cpu = new float[numel];
-        auto o_gpu_c = new float[numel];
+    int batch_size = q.size(0);
+    int num_heads = q.size(1);
+    int seq_length = q.size(2);
+    int hidden_size = q.size(3);
 
-        auto m_cpu = new float[s012];
-        auto m_gpu_c = new float[s012];
+    auto out = at::empty_like(v);
+    auto out_m = at::empty({batch_size, num_heads, seq_length}, v.options());
+    auto out_l = at::empty({batch_size, num_heads, seq_length}, v.options());
 
-        auto l_cpu = new float[s012];
-        auto l_gpu_c = new float[s012];
+    AT_DISPATCH_FLOATING_TYPES_AND2(
+        at::ScalarType::Half,
+        at::ScalarType::BFloat16,
+        v.scalar_type(),
+        "fused_self_attention_fw",
+        [&]() {
+            pmkl_cpu::host_self_attention_forward<scalar_t>(
+                out.data<scalar_t>(),
+                q.contiguous().data<scalar_t>(),
+                k.contiguous().data<scalar_t>(),
+                v.contiguous().data<scalar_t>(),
+                batch_size,
+                num_heads,
+                seq_length,
+                hidden_size,
+                is_causal,
+                out_m.data<scalar_t>(),
+                out_l.data<scalar_t>());
+        });
 
-        utils::host::fill_rand<float>(q_data, numel, -1.05, 1.05);
-        utils::host::fill_rand<float>(k_data, numel, -1.05, 1.05);
-        utils::host::fill_rand<float>(v_data, numel, -1.05, 1.05);
+    return std::forward_as_tuple(out, out_m, out_l);
+}
 
-        host_self_attention_forward(o_cpu, q_data, k_data, v_data,
-                                    shape[0], shape[1], shape[2], shape[3], true, m_cpu, l_cpu);
+std::tuple<at::Tensor, at::Tensor, at::Tensor> fused_self_attention_bw(
+    const at::Tensor &dout, const at::Tensor &q, const at::Tensor &k, const at::Tensor &v,
+    const at::Tensor &out_m, const at::Tensor &out_l, bool is_causal) {
+    TORCH_CHECK(q.dim() == 4 && k.dim() == 4 && v.dim() == 4, "Input tensor shapes must match");
+    TORCH_CHECK(q.is_contiguous() && k.is_contiguous() && v.is_contiguous(), "Input tensor must be contiguous");
+    TORCH_CHECK(q.sizes() == k.sizes() && q.sizes() == v.sizes(), "Input tensor shapes must match");
 
-        q.copy_from_cpu_ptr((void *)q_data);
-        k.copy_from_cpu_ptr((void *)k_data);
-        v.copy_from_cpu_ptr((void *)v_data);
+    int batch_size = q.size(0);
+    int num_heads = q.size(1);
+    int seq_length = q.size(2);
+    int hidden_size = q.size(3);
 
-        auto q_ = reinterpret_cast<float *>(q.data_ptr());
-        auto k_ = reinterpret_cast<float *>(k.data_ptr());
-        auto v_ = reinterpret_cast<float *>(v.data_ptr());
-        auto o_ = reinterpret_cast<float *>(o.data_ptr());
-        auto ms_ = reinterpret_cast<float *>(ms.data_ptr());
-        auto ls_ = reinterpret_cast<float *>(ls.data_ptr());
+    auto dq = at::zeros_like(q);
+    auto dk = at::zeros_like(k);
+    auto dv = at::zeros_like(v);
 
-        nlp::causal_attention_forward<float, 32, 64>(o_, q_, k_, v_, shape[0], shape[1], shape[2], ms_, ls_);
-        l->memcpy((void *)o_gpu_c, (void *)o_, numel * sizeof(float), GpuLauncher::Direction::D2H);
-        l->memcpy((void *)m_gpu_c, (void *)ms_, s012 * sizeof(float), GpuLauncher::Direction::D2H);
-        l->memcpy((void *)l_gpu_c, (void *)ls_, s012 * sizeof(float), GpuLauncher::Direction::D2H);
+    AT_DISPATCH_FLOATING_TYPES_AND2(
+        at::ScalarType::Half,
+        at::ScalarType::BFloat16,
+        v.scalar_type(),
+        "fused_self_attention_bw",
+        [&]() {
+            pmkl_cpu::host_self_attention_backward<scalar_t>(
+                dq.data<scalar_t>(),
+                dk.data<scalar_t>(),
+                dv.data<scalar_t>(),
+                dout.contiguous().data<scalar_t>(),
+                q.data<scalar_t>(),
+                k.data<scalar_t>(),
+                v.data<scalar_t>(),
+                out_m.data<scalar_t>(),
+                out_l.data<scalar_t>(),
+                batch_size,
+                num_heads,
+                seq_length,
+                hidden_size,
+                is_causal);
+        });
 
-        std::cout << "testing m ...\n";
-        if (!utils::all_close(m_gpu_c, m_cpu, s012))
-            return 1;
-        std::cout << "testing l ...\n";
-        if (!utils::all_close(l_gpu_c, l_cpu, s012))
-            return 1;
-        std::cout << "testing out ...\n";
-        if (!utils::all_close(o_gpu_c, o_cpu, numel))
-            return 1;
-        cout << "ok";
-    }
+    return std::forward_as_tuple(dq, dk, dv);
+}
+
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    m.def("fused_self_attention_fw", &fused_self_attention_fw, "fused_self_attention_fw");
+    m.def("fused_self_attention_bw", &fused_self_attention_bw, "fused_self_attention_bw");
 }
